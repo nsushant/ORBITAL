@@ -1,0 +1,183 @@
+# plots/visualise.jl
+# plotdvtable  — heatmap of departure vs arrival epoch coloured by ΔV
+# plotdemands  — scatter of deadline vs total service time, coloured by min ΔV to depot
+
+using CairoMakie
+
+"""
+    _gauss_blur(Z, σ) → Matrix{Float64}
+
+NaN-aware 2D Gaussian blur with standard deviation `σ` (in grid cells).
+NaN cells are skipped in the kernel sum; output cell is NaN only if no
+finite neighbour falls within the kernel radius.
+"""
+function _gauss_blur(Z::Matrix{Float64}, σ::Float64=1.5)
+    n, m = size(Z)
+    r    = ceil(Int, 3σ)
+    out  = fill(NaN, n, m)
+    for i in 1:n, j in 1:m
+        wsum = 0.0; vsum = 0.0
+        for di in -r:r, dj in -r:r
+            ii = i + di; jj = j + dj
+            1 <= ii <= n && 1 <= jj <= m || continue
+            isnan(Z[ii, jj]) && continue
+            w     = exp(-0.5 * (di^2 + dj^2) / σ^2)
+            vsum += w * Z[ii, jj]
+            wsum += w
+        end
+        wsum > 0 && (out[i, j] = vsum / wsum)
+    end
+    return out
+end
+
+"""
+    plotdvtable(name1, name2, cost_table, sim; smooth=true, σ=1.5)
+
+Heatmap of departure epoch [days] vs arrival epoch [days] coloured by ΔV [m/s]
+for transfers from node `name1` to node `name2`.
+Invalid / missing cells are shown in light grey.
+`smooth=true` applies a NaN-aware Gaussian blur with std `σ` grid cells.
+"""
+function plotdvtable(name1::String, name2::String, cost_table::Dict, sim;
+                     smooth::Bool    = true,
+                     σ::Float64      = 1.5)
+
+    haskey(sim.id_to_idx, name1) || error("\"$name1\" not found in simulation")
+    haskey(sim.id_to_idx, name2) || error("\"$name2\" not found in simulation")
+
+    idx1 = sim.id_to_idx[name1]
+    idx2 = sim.id_to_idx[name2]
+
+    matching = [(k, v) for (k, v) in cost_table if k[1] == idx1 && k[2] == idx2]
+    isempty(matching) && error("No cost table entries for $name1 → $name2")
+
+    deps = sort(unique(Float64[k[3] for (k, _) in matching]))
+    arrs = sort(unique(Float64[k[4] for (k, _) in matching]))
+
+    dep_idx = Dict(d => i for (i, d) in enumerate(deps))
+    arr_idx = Dict(a => j for (j, a) in enumerate(arrs))
+
+    Z = fill(NaN, length(deps), length(arrs))
+    for (k, v) in matching
+        v < 1e7 && (Z[dep_idx[k[3]], arr_idx[k[4]]] = v)
+    end
+
+    smooth && (Z = _gauss_blur(Z, σ))
+
+    finite_vals = filter(isfinite, vec(Z))
+    clims = isempty(finite_vals) ? (0.0, 1.0) : (minimum(finite_vals), maximum(finite_vals))
+
+    fig = Figure(size = (860, 620))
+    ax  = Axis(fig[1, 1];
+               xlabel = "Departure [days]",
+               ylabel = "Arrival [days]",
+               title  = "ΔV [m/s]  |  $name1 → $name2" * (smooth ? "  (smoothed)" : ""))
+    hm  = heatmap!(ax, deps, arrs, Z;
+                   colormap   = :viridis,
+                   nan_color  = :lightgray,
+                   colorrange = clims)
+    Colorbar(fig[1, 2], hm; label = "ΔV [m/s]")
+
+    return fig
+end
+
+"""
+    plotdemands(sat_identifiers, demand_deadlines, service_times, cost_table, sim)
+
+Scatter plot where each point is one demand:
+  x     = deadline [days]
+  y     = total service time accumulated for that satellite across all its demands [days]
+  color = minimum ΔV from any depot to that satellite (across all cost table entries) [m/s]
+"""
+function plotdemands(demands::Dict, cost_table::Dict, sim)
+
+    sat_identifiers = demands["sat_identifiers"]
+    demand_deadlines = demands["demand_deadlines"]
+    service_times    = demands["service_times"]
+
+    depot_idxs = findall(n -> startswith(n, "depot"), sim.names)
+    isempty(depot_idxs) && error("No depot nodes found in simulation")
+
+    # ── per-satellite total service time ──────────────────────────────────────
+    sat_total_svc = Dict{String, Float64}()
+    for (i, sat) in enumerate(sat_identifiers)
+        sat_total_svc[sat] = get(sat_total_svc, sat, 0.0) + service_times[i]
+    end
+
+    # ── per-satellite minimum ΔV from any depot ────────────────────────────────
+    sat_min_dv = Dict{String, Float64}()
+    for sat in keys(sat_total_svc)
+        si     = sim.id_to_idx[sat]
+        min_dv = Inf
+        for di in depot_idxs
+            for (k, v) in cost_table
+                k[1] == di && k[2] == si && v < min_dv && (min_dv = v)
+            end
+        end
+        sat_min_dv[sat] = isfinite(min_dv) ? min_dv : NaN
+    end
+
+    x = demand_deadlines
+    y = Float64[sat_total_svc[s]  for s in sat_identifiers]
+    c = Float64[sat_min_dv[s]     for s in sat_identifiers]
+
+    finite_c = filter(isfinite, c)
+    clims    = isempty(finite_c) ? (0.0, 1.0) : (minimum(finite_c), maximum(finite_c))
+
+    fig = Figure(size = (860, 620))
+    ax  = Axis(fig[1, 1];
+               xlabel = "Deadline [days]",
+               ylabel = "Total service time for satellite [days]",
+               title  = "Demands  (colour = min ΔV depot→sat [m/s])")
+    sc  = scatter!(ax, x, y;
+                   color       = c,
+                   colormap    = :plasma,
+                   colorrange  = clims,
+                   markersize  = 9,
+                   nan_color   = :lightgray)
+    Colorbar(fig[1, 2], sc; label = "Min ΔV [m/s]")
+
+    return fig
+end
+
+function plot_pareto(archive::Archive)
+
+    isempty(archive.solutions) && error("Archive is empty.")
+
+    xs      = archive.total_deltaV
+    ys      = archive.total_serv_time_unassigned
+    n_vehs  = archive.total_vehicles_used
+
+    unique_nv   = sort(unique(n_vehs))
+    base_colors = Makie.wong_colors()
+    palette     = [base_colors[mod1(i, length(base_colors))] for i in eachindex(unique_nv)]
+
+    fig = Figure(size=(1200, 800))
+    ax  = Axis(fig[1, 1];
+               xlabel = "Total ΔV [m/s]",
+               ylabel = "Unassigned service time [days]",
+               title  = "MDLS solutions")
+
+    @info "plot_pareto data summary" n_solutions=length(xs) unique_vehicle_counts=unique_nv ΔV_range=(minimum(xs), maximum(xs)) unassigned_range=(minimum(ys), maximum(ys))
+    for nv in unique_nv
+        mask = findall(==(nv), n_vehs)
+        @info "  vehicle group" n_vehicles=nv n_solutions=length(mask) ΔV_range=(minimum(xs[mask]), maximum(xs[mask])) unassigned_range=(minimum(ys[mask]), maximum(ys[mask]))
+    end
+
+    for (i, nv) in enumerate(unique_nv)
+        mask  = findall(==(nv), n_vehs)
+        col   = palette[i]
+        label = "$nv vehicle$(nv == 1 ? "" : "s")"
+
+        order = sortperm(xs[mask])
+        gx    = xs[mask][order]
+        gy    = ys[mask][order]
+
+        lines!(ax, gx, gy; color=(col, 0.5), linewidth=1.5)
+        scatter!(ax, gx, gy; color=col, markersize=10, label=label)
+    end
+
+    Legend(fig[1, 2], ax; title="Vehicles used", framevisible=true)
+
+    return fig
+end
