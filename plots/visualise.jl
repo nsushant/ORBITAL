@@ -181,3 +181,85 @@ function plot_pareto(archive::Archive)
 
     return fig
 end
+
+"""
+    plot_comparison(fronts; title, budget_sec)
+
+Overlay plot comparing multiple algorithms on the same 2D Pareto axes (ΔV vs
+unassigned service time).  `fronts` is a `Vector` of `(label, Matrix{Float64})`
+pairs where each matrix is `n_solutions × 3` with columns [f1_dv, f2_unassigned,
+f3_vehicles].
+
+MDLS points are drawn with per-vehicle-count lines (same style as `plot_pareto`).
+GA points are drawn as plain scatter with a connecting Pareto-front line sorted
+by f1.  Marker size scales with f3 (vehicles used) across all algorithms.
+"""
+function plot_comparison(fronts::Vector{<:Tuple};
+                         title::String    = "Algorithm comparison",
+                         budget_sec::Real = 0)
+
+    isempty(fronts) && error("No fronts to plot.")
+
+    alg_colors = [:royalblue, :crimson, :seagreen, :darkorange,
+                  :purple,    :brown,   :teal,     :olive]
+
+    title_str = budget_sec > 0 ?
+                "$title  ($(Int(round(budget_sec)))s budget each)" : title
+
+    fig = Figure(size = (1500, 900))
+    ax  = Axis(fig[1, 1];
+               xlabel = "Total ΔV [m/s]",
+               ylabel = "Unassigned service time [days]",
+               title  = title_str)
+
+    # global vehicle range for consistent marker sizing
+    all_f3   = vcat([m[:, 3] for (_, m) in fronts]...)
+    f3_min   = minimum(all_f3)
+    f3_max   = max(maximum(all_f3), f3_min + 1.0)
+    _msz(f3) = @. 5.0 + 15.0 * (f3 - f3_min) / (f3_max - f3_min)
+
+    for (ai, (lbl, m)) in enumerate(fronts)
+        isempty(m) && continue
+        col    = alg_colors[mod1(ai, length(alg_colors))]
+        xs     = m[:, 1]
+        ys     = m[:, 2]
+        f3vals = m[:, 3]
+
+        if lbl == "MDLS"
+            # per-vehicle-count groups with connecting lines (same as plot_pareto)
+            unique_nv = sort(unique(Int.(f3vals)))
+            nv_colors = Makie.wong_colors()
+            for (ni, nv) in enumerate(unique_nv)
+                mask  = findall(==(nv), f3vals)
+                ncol  = nv_colors[mod1(ni, length(nv_colors))]
+                order = sortperm(xs[mask])
+                gx    = xs[mask][order]
+                gy    = ys[mask][order]
+                lines!(ax, gx, gy;
+                       color     = (ncol, 0.35),
+                       linewidth = 1.2)
+                scatter!(ax, gx, gy;
+                         color      = (ncol, 0.7),
+                         markersize = _msz(Float64(nv)),
+                         label      = ni == 1 ? "MDLS" : nothing)
+            end
+        else
+            # GA: sort by f1 and draw a single connecting line
+            order = sortperm(xs)
+            lines!(ax, xs[order], ys[order];
+                   color     = (col, 0.45),
+                   linewidth = 1.8)
+            scatter!(ax, xs, ys;
+                     color      = (col, 0.75),
+                     markersize = _msz.(f3vals),
+                     label      = lbl)
+        end
+    end
+
+    Legend(fig[1, 2], ax;
+           title        = "Algorithm\n(size ∝ vehicles)",
+           framevisible = true,
+           merge        = true)
+
+    return fig
+end

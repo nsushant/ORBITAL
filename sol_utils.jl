@@ -14,12 +14,199 @@ function copy_schedule(schedule)
              copy(v.departures), copy(v.costs)) for v in schedule]
 end
 
+mutable struct OctNode
+    dv_lo::Float64; dv_hi::Float64
+    us_lo::Float64; us_hi::Float64
+    veh_lo::Float64; veh_hi::Float64
+    ideal_dv::Float64; ideal_us::Float64; ideal_veh::Float64
+    idx::Union{Nothing, Int}
+    children::Union{Nothing, Vector{OctNode}}
+end
+
 mutable struct Archive
     solutions::Vector{Vector{vehicle}}
     unassigned_sets::Vector{Union{Nothing, Dict}}
     total_deltaV::Vector{Float64}
     total_serv_time_unassigned::Vector{Float64}
     total_vehicles_used::Vector{Int}
+    tree::Union{Nothing, OctNode}
+end
+
+# ── Octree helpers ─────────────────────────────────────────────────────────────
+
+const OCTREE_MAX_DEPTH = 30
+
+function _octant(node, dv, us, veh)
+    mid_dv = (node.dv_lo + node.dv_hi) / 2
+    mid_us = (node.us_lo + node.us_hi) / 2
+    mid_veh = (node.veh_lo + node.veh_hi) / 2
+    dv_bit = dv >= mid_dv ? 1 : 0
+    us_bit = us >= mid_us ? 1 : 0
+    veh_bit = veh >= mid_veh ? 1 : 0
+    1 + dv_bit + us_bit * 2 + veh_bit * 4
+end
+
+function _init_octree(dv, us, veh, idx)
+    pad_dv = max(abs(dv) * 0.01, 1.0)
+    pad_us = max(abs(us) * 0.01, 1.0)
+    pad_veh = max(abs(veh) * 0.01, 1.0)
+    OctNode(dv - pad_dv, dv + pad_dv,
+            us - pad_us, us + pad_us,
+            veh - pad_veh, veh + pad_veh,
+            dv, us, veh, idx, nothing)
+end
+
+function _split_leaf!(node)
+    mid_dv = (node.dv_lo + node.dv_hi) / 2
+    mid_us = (node.us_lo + node.us_hi) / 2
+    mid_veh = (node.veh_lo + node.veh_hi) / 2
+    children = OctNode[]
+    for veh_bit in 0:1, us_bit in 0:1, dv_bit in 0:1
+        push!(children, OctNode(
+            dv_bit == 0 ? node.dv_lo : mid_dv,
+            dv_bit == 0 ? mid_dv : node.dv_hi,
+            us_bit == 0 ? node.us_lo : mid_us,
+            us_bit == 0 ? mid_us : node.us_hi,
+            veh_bit == 0 ? node.veh_lo : mid_veh,
+            veh_bit == 0 ? mid_veh : node.veh_hi,
+            Inf, Inf, Inf, nothing, nothing))
+    end
+    node.children = children
+    node.idx = nothing
+end
+
+function _update_ideal!(node)
+    node.ideal_dv = minimum(c.ideal_dv for c in node.children)
+    node.ideal_us = minimum(c.ideal_us for c in node.children)
+    node.ideal_veh = minimum(c.ideal_veh for c in node.children)
+end
+
+function _expand_to_fit!(node, dv, us, veh)
+    changed = false
+    if dv < node.dv_lo
+        node.dv_lo = dv * 0.99
+        changed = true
+    end
+    if dv > node.dv_hi
+        node.dv_hi = dv * 1.01
+        changed = true
+    end
+    if us < node.us_lo
+        node.us_lo = us * 0.99
+        changed = true
+    end
+    if us > node.us_hi
+        node.us_hi = us * 1.01
+        changed = true
+    end
+    if veh < node.veh_lo
+        node.veh_lo = veh - 1
+        changed = true
+    end
+    if veh > node.veh_hi
+        node.veh_hi = veh + 1
+        changed = true
+    end
+    changed
+end
+
+function _dominates_point(A, ai, dv, us, veh)
+    ad = A.total_deltaV[ai]; au = A.total_serv_time_unassigned[ai]; av = A.total_vehicles_used[ai]
+    ad <= dv && au <= us && av <= veh && (ad < dv || au < us || av < veh)
+end
+
+function is_dominated(node, dv, us, veh, A, exclude_idx=nothing)
+    if dv < node.ideal_dv || us < node.ideal_us || veh < node.ideal_veh
+        return false
+    end
+    if node.children === nothing
+        if node.idx !== nothing && (exclude_idx === nothing || node.idx != exclude_idx)
+            if _dominates_point(A, node.idx, dv, us, veh)
+                return true
+            end
+        end
+        return false
+    else
+        for child in node.children
+            if is_dominated(child, dv, us, veh, A, exclude_idx)
+                return true
+            end
+        end
+        return false
+    end
+end
+
+function octree_insert!(node, idx, A, depth=0)
+    dv = A.total_deltaV[idx]
+    us = A.total_serv_time_unassigned[idx]
+    veh = A.total_vehicles_used[idx]
+
+    if node.children === nothing
+        if node.idx === nothing
+            node.idx = idx
+            node.ideal_dv = dv
+            node.ideal_us = us
+            node.ideal_veh = veh
+            return true
+        else
+            old_idx = node.idx
+            old_dv = A.total_deltaV[old_idx]
+            old_us = A.total_serv_time_unassigned[old_idx]
+            old_veh = A.total_vehicles_used[old_idx]
+
+            old_le = old_dv <= dv && old_us <= us && old_veh <= veh
+            new_le = dv <= old_dv && us <= old_us && veh <= old_veh
+            old_lt = old_dv < dv || old_us < us || old_veh < veh
+            new_lt = dv < old_dv || us < old_us || veh < old_veh
+
+            if old_le && old_lt
+                return false
+            elseif new_le && new_lt
+                node.idx = idx
+                node.ideal_dv = dv
+                node.ideal_us = us
+                node.ideal_veh = veh
+                return true
+            else
+                dv == old_dv && us == old_us && veh == old_veh && return false
+                depth >= OCTREE_MAX_DEPTH && return false
+                _split_leaf!(node)
+                o1 = _octant(node, old_dv, old_us, old_veh)
+                o2 = _octant(node, dv, us, veh)
+                octree_insert!(node.children[o1], old_idx, A, depth + 1)
+                octree_insert!(node.children[o2], idx, A, depth + 1)
+                _update_ideal!(node)
+                return true
+            end
+        end
+    else
+        o = _octant(node, dv, us, veh)
+        changed = octree_insert!(node.children[o], idx, A, depth + 1)
+        if changed
+            _update_ideal!(node)
+        end
+        return changed
+    end
+end
+
+function rebuild_octree!(A)
+    n = length(A.solutions)
+    if n == 0
+        A.tree = nothing
+        return
+    end
+    A.tree = _init_octree(A.total_deltaV[1], A.total_serv_time_unassigned[1], A.total_vehicles_used[1], 1)
+    for i in 2:n
+        octree_insert!(A.tree, i, A)
+    end
+end
+
+function build_min_dv_table(cost_table, n_nodes)
+    tab = fill(Inf, n_nodes, n_nodes)
+    for ((i, j, _, _), dv) in cost_table
+        dv < tab[i, j] && (tab[i, j] = dv)
+    end
+    return tab
 end
 
 function snap_cost(CostTable, from_idx, to_idx, dep_epoch, arr_epoch)

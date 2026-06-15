@@ -3,10 +3,12 @@ include("demands/generate_demands.jl")
 include("sol_utils.jl")
 include("plots/gantt.jl")
 include("plots/visualise.jl")
+include("plots/gradients.jl")
 
 demands = load_demands()
 cost_table = load_cost_table()
 mintof_table = build_min_tof_table()
+min_dv_tab = build_min_dv_table(cost_table, maximum(k[1] for k in keys(cost_table)))
 schedule, unassigned = make_init_schedule(demands, load_sim(),nvehicles=40)
 
 schedule_copy = copy(schedule)
@@ -971,12 +973,257 @@ end
 
 
 
+# ── Shared repair: regret-2 insertion ────────────────────────────────────────
+# Inserts `removed_uids` into `schedule` one at a time, ordered by descending
+# regret (best2_delta - best1_delta). Demands with no feasible position are
+# appended to `out_unassigned`.
+function _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTable,
+                          name_to_idx, out_unassigned)
+    svc_times = demands["service_times"]
+    deadlines = demands["demand_deadlines"]
+    sat_ids   = demands["sat_identifiers"]
+
+    remaining = copy(removed_uids)
+
+    while !isempty(remaining)
+        best_regret = -Inf
+        best_uid    = 0
+        best_v      = 0
+        best_p      = 0
+        best_delta  = 0.0
+
+        for uid in remaining
+            r_idx = name_to_idx[sat_ids[uid]]
+            dl    = deadlines[uid]
+            svc   = svc_times[uid]
+            b1 = Inf; b1v = 0; b1p = 0; b1delta = 0.0
+            b2 = Inf
+
+            for (v, veh) in enumerate(schedule)
+                n = length(veh.visitedUID)
+                for p in 1:n
+                    prev_name = veh.visitedSAT[p]
+                    prev_idx  = name_to_idx[prev_name]
+                    haskey(MinTOFTable, (prev_idx, r_idx)) || continue
+                    tof_pr = MinTOFTable[(prev_idx, r_idx)][1]
+                    arr_r  = veh.departures[p] + tof_pr
+                    arr_r + svc > dl && continue
+
+                    next_idx = p < n ? name_to_idx[veh.visitedSAT[p+1]] : nothing
+                    haskey(MinTOFTable, (r_idx, isnothing(next_idx) ? prev_idx : next_idx)) || continue
+
+                    dep_r = arr_r + svc
+                    if isnothing(next_idx)
+                        dv_in  = snap_cost(CostTable, prev_idx, r_idx, veh.departures[p], arr_r)
+                        dv_out = 0.0
+                        old_dv = 0.0
+                    else
+                        arr_next = veh.arrivals[p+1]
+                        dv_in    = snap_cost(CostTable, prev_idx, r_idx, veh.departures[p], arr_r)
+                        dv_out   = snap_cost(CostTable, r_idx, next_idx, dep_r, arr_next)
+                        old_dv   = veh.costs[p+1]
+                    end
+                    delta = dv_in + dv_out - old_dv
+                    if delta < b1
+                        b2 = b1
+                        b1 = delta; b1v = v; b1p = p; b1delta = delta
+                    elseif delta < b2
+                        b2 = delta
+                    end
+                end
+            end
+
+            regret = (b2 == Inf ? b1 : b2) - b1
+            if b1v > 0 && regret > best_regret
+                best_regret = regret
+                best_uid    = uid
+                best_v      = b1v
+                best_p      = b1p
+                best_delta  = b1delta
+            end
+        end
+
+        if best_v == 0
+            append!(out_unassigned, [uid for uid in remaining if uid == first(remaining)])
+            filter!(u -> u != first(remaining), remaining)
+            continue
+        end
+
+        filter!(u -> u != best_uid, remaining)
+        veh     = schedule[best_v]
+        r_idx   = name_to_idx[sat_ids[best_uid]]
+        prev_idx = name_to_idx[veh.visitedSAT[best_p]]
+        tof_pr  = MinTOFTable[(prev_idx, r_idx)][1]
+        arr_r   = veh.departures[best_p] + tof_pr
+        dep_r   = arr_r + svc_times[best_uid]
+        dv_in   = snap_cost(CostTable, prev_idx, r_idx, veh.departures[best_p], arr_r)
+
+        insert!(veh.visitedUID, best_p + 1, best_uid)
+        insert!(veh.visitedSAT, best_p + 1, sat_ids[best_uid])
+        insert!(veh.arrivals,   best_p + 1, arr_r)
+        insert!(veh.departures, best_p + 1, dep_r)
+        insert!(veh.costs,      best_p + 1, dv_in)
+
+        if best_p + 1 < length(veh.visitedUID)
+            next_idx = name_to_idx[veh.visitedSAT[best_p + 2]]
+            arr_next = veh.arrivals[best_p + 2]
+            veh.costs[best_p + 2] = snap_cost(CostTable, r_idx, next_idx, dep_r, arr_next)
+        end
+    end
+end
+
+
+# ── Destroy-and-repair operator ───────────────────────────────────────────────
+function destroy_and_repair(schedule, demands, CostTable, MinTOFTable, min_dv_tab, sim,
+                             unassigned_in=nothing; destroy_frac=0.25)
+
+    schedule = copy_schedule(schedule)
+    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
+    sat_ids   = demands["sat_identifiers"]
+    deadlines = demands["demand_deadlines"]
+
+    # ── Worst-cost removal ────────────────────────────────────────────────────
+    scored = Tuple{Float64, Int, Int}[]
+    for (v, veh) in enumerate(schedule)
+        n = length(veh.visitedUID)
+        for p in 2:n-1
+            veh.visitedUID[p] > 0 || continue
+            prev_idx = name_to_idx[veh.visitedSAT[p-1]]
+            node_idx = name_to_idx[veh.visitedSAT[p]]
+            next_idx = name_to_idx[veh.visitedSAT[p+1]]
+            saving = min_dv_tab[prev_idx, node_idx] + min_dv_tab[node_idx, next_idx] -
+                     min_dv_tab[prev_idx, next_idx]
+            push!(scored, (saving, v, p))
+        end
+    end
+    sort!(scored, by = x -> x[1], rev = true)
+
+    total_demands = count(x -> x > 0, (uid for veh in schedule for uid in veh.visitedUID))
+    k = max(1, round(Int, total_demands * destroy_frac))
+    k = min(k, length(scored))
+
+    removed_uids = Int[]
+    to_del = Dict{Int, Vector{Int}}()
+    for ci in 1:k
+        _, v, p = scored[ci]
+        push!(removed_uids, schedule[v].visitedUID[p])
+        push!(get!(to_del, v, Int[]), p)
+    end
+    for (v, positions) in to_del
+        for pos in sort(positions, rev=true)
+            deleteat!(schedule[v].visitedUID, pos)
+            deleteat!(schedule[v].visitedSAT, pos)
+            deleteat!(schedule[v].arrivals,   pos)
+            deleteat!(schedule[v].departures, pos)
+            deleteat!(schedule[v].costs,      pos)
+        end
+    end
+
+    # ── Regret-2 insertion ────────────────────────────────────────────────────
+    out_unassigned = Int[]
+    _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTable,
+                     name_to_idx, out_unassigned)
+
+    unassigned = _merge_unassigned(unassigned_in, out_unassigned, demands)
+    return schedule, unassigned
+end
+
+
+# ── Shaw orbital-relatedness operator ─────────────────────────────────────────
+function shaw_removal_repair(schedule, demands, CostTable, MinTOFTable, min_dv_tab, sim,
+                              unassigned_in=nothing;
+                              destroy_frac=0.25, shaw_α=1.0, shaw_β=0.3, shaw_p=6.0)
+
+    schedule = copy_schedule(schedule)
+    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
+    sat_ids   = demands["sat_identifiers"]
+    deadlines = demands["demand_deadlines"]
+
+    # ── Shaw removal ──────────────────────────────────────────────────────────
+    all_positions = [(v, p) for (v, veh) in enumerate(schedule)
+                             for p in eachindex(veh.visitedUID)
+                             if veh.visitedUID[p] > 0]
+    isempty(all_positions) && return schedule, unassigned_in
+
+    total_demands = length(all_positions)
+    k = max(1, round(Int, total_demands * destroy_frac))
+
+    seed_v, seed_p = rand(all_positions)
+    seed_name = schedule[seed_v].visitedSAT[seed_p]
+    seed_idx  = name_to_idx[seed_name]
+    seed_uid  = schedule[seed_v].visitedUID[seed_p]
+    seed_dl   = deadlines[seed_uid]
+
+    removed_uids = Int[]
+    for _ in 1:k
+        cands = Tuple{Float64, Int, Int}[]
+        for (v, veh) in enumerate(schedule)
+            for p in eachindex(veh.visitedUID)
+                veh.visitedUID[p] > 0 || continue
+                (v == seed_v && p == seed_p) && continue
+                c_idx = name_to_idx[veh.visitedSAT[p]]
+                c_dl  = deadlines[veh.visitedUID[p]]
+                rel   = shaw_α * min_dv_tab[seed_idx, c_idx] +
+                        shaw_β * abs(seed_dl - c_dl)
+                push!(cands, (rel, v, p))
+            end
+        end
+        isempty(cands) && break
+        sort!(cands, by = x -> x[1])
+        idx = clamp(floor(Int, rand()^shaw_p * length(cands)) + 1, 1, length(cands))
+        _, pv, pp = cands[idx]
+        push!(removed_uids, schedule[pv].visitedUID[pp])
+        deleteat!(schedule[pv].visitedUID, pp)
+        deleteat!(schedule[pv].visitedSAT, pp)
+        deleteat!(schedule[pv].arrivals,   pp)
+        deleteat!(schedule[pv].departures, pp)
+        deleteat!(schedule[pv].costs,      pp)
+        seed_idx = name_to_idx[sat_ids[removed_uids[end]]]
+        seed_dl  = deadlines[removed_uids[end]]
+    end
+
+    # ── Regret-2 insertion ────────────────────────────────────────────────────
+    out_unassigned = Int[]
+    _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTable,
+                     name_to_idx, out_unassigned)
+
+    unassigned = _merge_unassigned(unassigned_in, out_unassigned, demands)
+    return schedule, unassigned
+end
+
+
+# ── Helper: merge newly unassigned UIDs into the unassigned dict ──────────────
+function _merge_unassigned(unassigned_in, new_uids, demands)
+    isempty(new_uids) && return unassigned_in
+    sat_ids   = demands["sat_identifiers"]
+    deadlines = demands["demand_deadlines"]
+    svc_times = demands["service_times"]
+    if unassigned_in === nothing
+        return Dict{String,Any}(
+            "sat_identifiers" => [sat_ids[u] for u in new_uids],
+            "demand_deadlines" => [deadlines[u] for u in new_uids],
+            "service_times"    => [svc_times[u] for u in new_uids],
+            "UIDs"             => new_uids,
+        )
+    else
+        all_uids = vcat(unassigned_in["UIDs"], new_uids)
+        return Dict{String,Any}(
+            "sat_identifiers" => [sat_ids[u] for u in all_uids],
+            "demand_deadlines" => [deadlines[u] for u in all_uids],
+            "service_times"    => [svc_times[u] for u in all_uids],
+            "UIDs"             => all_uids,
+        )
+    end
+end
+
+
 function remove_from_archive!(A, idx)
     deleteat!(A.solutions, idx)
     deleteat!(A.unassigned_sets, idx)
     deleteat!(A.total_deltaV, idx)
     deleteat!(A.total_serv_time_unassigned, idx)
     deleteat!(A.total_vehicles_used, idx)
+    # Tree is not updated here — caller must rebuild after batch removals
 end
 
 
@@ -999,16 +1246,29 @@ function update_archive!(F, G)
             end
         end
     end
-    for idx in sort(to_rm_f, rev=true)
-        remove_from_archive!(F, idx)
+    if !isempty(to_rm_f)
+        for idx in sort(to_rm_f, rev=true)
+            remove_from_archive!(F, idx)
+        end
+        if F.tree !== nothing
+            rebuild_octree!(F)
+        end
     end
 
     to_rm_g = Int[]
-    for j in eachindex(G.solutions)
-        for i in eachindex(F.solutions)
-            if dominates(F, i, G, j)
+    if F.tree !== nothing && !isempty(F.solutions)
+        for j in eachindex(G.solutions)
+            if is_dominated(F.tree, G.total_deltaV[j], G.total_serv_time_unassigned[j], G.total_vehicles_used[j], F)
                 push!(to_rm_g, j)
-                break
+            end
+        end
+    else
+        for j in eachindex(G.solutions)
+            for i in eachindex(F.solutions)
+                if dominates(F, i, G, j)
+                    push!(to_rm_g, j)
+                    break
+                end
             end
         end
     end
@@ -1017,22 +1277,37 @@ function update_archive!(F, G)
     end
 end
 
-_new_archive() = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[])
+_new_archive() = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
 
 function prune_archive!(A)
     n = length(A.solutions)
+    n <= 1 && return
     dominated = zeros(Bool, n)
-    Threads.@threads for i in 1:n
-        for j in 1:n
-            i == j && continue
-            if dominates(A, j, A, i)
+
+    if A.tree !== nothing
+        for i in 1:n
+            if is_dominated(A.tree, A.total_deltaV[i], A.total_serv_time_unassigned[i], A.total_vehicles_used[i], A, i)
                 dominated[i] = true
-                break
+            end
+        end
+    else
+        Threads.@threads for i in 1:n
+            for j in 1:n
+                i == j && continue
+                if dominates(A, j, A, i)
+                    dominated[i] = true
+                    break
+                end
             end
         end
     end
+
     for idx in findall(dominated) |> reverse
         remove_from_archive!(A, idx)
+    end
+
+    if A.tree !== nothing
+        rebuild_octree!(A)
     end
 end
 
@@ -1044,23 +1319,36 @@ function _add_to_archive!(A, sol, un)
     push!(A.total_deltaV, dv)
     push!(A.total_serv_time_unassigned, us)
     push!(A.total_vehicles_used, length(sol))
+    new_idx = length(A.solutions)
+
+    if A.tree === nothing
+        A.tree = _init_octree(dv, us, length(sol), new_idx)
+    else
+        _expand_to_fit!(A.tree, dv, us, length(sol))
+        octree_insert!(A.tree, new_idx, A)
+    end
 end
 
 Base.@noinline function _seed_archive(sol, un)
-    A = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[])
+    A = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
     _add_to_archive!(A, sol, un)
     return A
 end
 
-function MDLS(maxiter, demands, simulation, cost_table, mintof_table; nvehicles=25)
+function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab;
+              nvehicles=20, time_limit=Inf, init_sol=nothing, init_unassigned=nothing)
 
-    init_sol, unassigned = make_init_schedule(demands, simulation, nvehicles=nvehicles)
+    t_start = time()
+    if isnothing(init_sol)
+        init_sol, init_unassigned = make_init_schedule(demands, simulation, nvehicles=nvehicles)
+    end
     sim_obj = load_sim()
 
-    F = _seed_archive(init_sol, unassigned)
+    F = _seed_archive(init_sol, init_unassigned)
 
-    op_names = ["opt_times", "opt_times2", "consolidate", "swap_cross", "swap_intra", "create_veh", "prune"]
-    op_times = zeros(7)
+    op_names = ["opt_times", "opt_times2", "consolidate", "swap_cross", "swap_intra",
+                "create_veh", "destroy_repair", "shaw", "prune"]
+    op_times = zeros(9)
 
     operators = [
         (s, u) -> (opt_times(s, demands, cost_table, mintof_table, sim_obj), u),
@@ -1069,9 +1357,12 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table; nvehicles=
         (s, u) -> (swap_cross_vehicle(s, demands, cost_table, mintof_table, sim_obj), u),
         (s, u) -> (swap_intratour(s, demands, cost_table, mintof_table, sim_obj), u),
         (s, u) -> create_vehicle(s, demands, u, cost_table, mintof_table, sim_obj),
+        (s, u) -> destroy_and_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
+        (s, u) -> shaw_removal_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
     ]
 
     for iter in 1:maxiter
+        time() - t_start > time_limit && break
         idx = rand(1:length(F.solutions))
         x = copy_schedule(F.solutions[idx])
         u_x = F.unassigned_sets[idx]
@@ -1090,12 +1381,12 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table; nvehicles=
         for j in eachindex(G.solutions)
             _add_to_archive!(F, G.solutions[j], G.unassigned_sets[j])
         end
-        op_times[7] += @elapsed prune_archive!(F)
+        op_times[9] += @elapsed prune_archive!(F)
         isempty(F.solutions) && break
     end
 
     @info "MDLS operator timing (total seconds across all iterations):" *
-          join(["\n  $(op_names[k]) = $(round(op_times[k]; digits=2))s" for k in 1:7])
+          join(["\n  $(op_names[k]) = $(round(op_times[k]; digits=2))s" for k in 1:9])
 
     return F
 end
@@ -1111,14 +1402,16 @@ end
 
 
 
-@info "Running MDLS …"
-archive = MDLS(3000, demands, load_sim(), cost_table, mintof_table)
-@info "MDLS complete" n_solutions=length(archive.solutions)
+if !@isdefined(GATESTS_INCLUDE) || !GATESTS_INCLUDE
+    @info "Running MDLS …"
+    archive = MDLS(1000, demands, load_sim(), cost_table, mintof_table, min_dv_tab)
+    @info "MDLS complete" n_solutions=length(archive.solutions)
 
-@save joinpath(@__DIR__, "outputs", "mdls_archive.jld2") archive
+    @save joinpath(@__DIR__, "outputs", "mdls_archive.jld2") archive
 
-fig = plot_pareto(archive)
-save(joinpath(@__DIR__, "outputs", "pareto_front.png"), fig)
+    fig = plot_pareto(archive)
+    save(joinpath(@__DIR__, "outputs", "pareto_front.png"), fig)
+end
 
 
 
