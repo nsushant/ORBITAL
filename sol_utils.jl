@@ -197,6 +197,7 @@ function rebuild_octree!(A)
     end
     A.tree = _init_octree(A.total_deltaV[1], A.total_serv_time_unassigned[1], A.total_vehicles_used[1], 1)
     for i in 2:n
+        _expand_to_fit!(A.tree, A.total_deltaV[i], A.total_serv_time_unassigned[i], A.total_vehicles_used[i])
         octree_insert!(A.tree, i, A)
     end
 end

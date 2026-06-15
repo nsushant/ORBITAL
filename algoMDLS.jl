@@ -4,6 +4,7 @@ include("sol_utils.jl")
 include("plots/gantt.jl")
 include("plots/visualise.jl")
 include("plots/gradients.jl")
+include("fuel_cost_calc/adaptive_grid.jl")
 
 demands = load_demands()
 cost_table = load_cost_table()
@@ -1236,104 +1237,90 @@ function dominates(A, ai, B, bi)
      A.total_vehicles_used[ai] < B.total_vehicles_used[bi])
 end
 
-function update_archive!(F, G)
-    to_rm_f = Int[]
-    for i in eachindex(F.solutions)
-        for j in eachindex(G.solutions)
-            if dominates(G, j, F, i)
-                push!(to_rm_f, i)
+function merge_archive!(F, G)
+    isempty(G.solutions) && return
+    isempty(F.solutions) && begin
+        append!(F.solutions, G.solutions)
+        append!(F.unassigned_sets, G.unassigned_sets)
+        append!(F.total_deltaV, G.total_deltaV)
+        append!(F.total_serv_time_unassigned, G.total_serv_time_unassigned)
+        append!(F.total_vehicles_used, G.total_vehicles_used)
+        rebuild_octree!(F)
+        empty!(G.solutions)
+        empty!(G.unassigned_sets)
+        empty!(G.total_deltaV)
+        empty!(G.total_serv_time_unassigned)
+        empty!(G.total_vehicles_used)
+        G.tree = nothing
+        return
+    end
+
+    # ── Phase A: G vs G (pairwise, k ≤ 8) ──
+    g_survive = trues(length(G.solutions))
+    for j1 in eachindex(G.solutions)
+        for j2 in eachindex(G.solutions)
+            j1 == j2 && continue
+            if dominates(G, j2, G, j1)
+                g_survive[j1] = false
                 break
             end
         end
     end
-    if !isempty(to_rm_f)
-        for idx in sort(to_rm_f, rev=true)
-            remove_from_archive!(F, idx)
-        end
-        if F.tree !== nothing
-            rebuild_octree!(F)
-        end
-    end
 
-    to_rm_g = Int[]
-    if F.tree !== nothing && !isempty(F.solutions)
-        for j in eachindex(G.solutions)
-            if is_dominated(F.tree, G.total_deltaV[j], G.total_serv_time_unassigned[j], G.total_vehicles_used[j], F)
-                push!(to_rm_g, j)
+    # ── Phase A: G vs F (octree, k log N) ──
+    for j in findall(g_survive)
+        if F.tree !== nothing && !isempty(F.solutions)
+            if is_dominated(F.tree,
+                            G.total_deltaV[j],
+                            G.total_serv_time_unassigned[j],
+                            G.total_vehicles_used[j], F)
+                g_survive[j] = false
             end
-        end
-    else
-        for j in eachindex(G.solutions)
+        else
             for i in eachindex(F.solutions)
                 if dominates(F, i, G, j)
-                    push!(to_rm_g, j)
-                    break
-                end
-            end
-        end
-    end
-    for idx in sort(to_rm_g, rev=true)
-        remove_from_archive!(G, idx)
-    end
-end
-
-_new_archive() = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
-
-function prune_archive!(A)
-    n = length(A.solutions)
-    n <= 1 && return
-    dominated = zeros(Bool, n)
-
-    if A.tree !== nothing
-        for i in 1:n
-            if is_dominated(A.tree, A.total_deltaV[i], A.total_serv_time_unassigned[i], A.total_vehicles_used[i], A, i)
-                dominated[i] = true
-            end
-        end
-    else
-        Threads.@threads for i in 1:n
-            for j in 1:n
-                i == j && continue
-                if dominates(A, j, A, i)
-                    dominated[i] = true
+                    g_survive[j] = false
                     break
                 end
             end
         end
     end
 
-    for idx in findall(dominated) |> reverse
-        remove_from_archive!(A, idx)
+    # ── Phase A: F vs surviving G (flat O(N × k), k ≤ 8) ──
+    surviving_g = findall(g_survive)
+    f_dominated = zeros(Bool, length(F.solutions))
+    for i in eachindex(F.solutions)
+        for j in surviving_g
+            if dominates(G, j, F, i)
+                f_dominated[i] = true
+                break
+            end
+        end
     end
 
-    if A.tree !== nothing
-        rebuild_octree!(A)
+    # ── Phase B: batch execute ──
+    for idx in findall(f_dominated) |> sort |> reverse
+        remove_from_archive!(F, idx)
     end
+
+    append!(F.solutions, G.solutions[surviving_g])
+    append!(F.unassigned_sets, G.unassigned_sets[surviving_g])
+    append!(F.total_deltaV, G.total_deltaV[surviving_g])
+    append!(F.total_serv_time_unassigned, G.total_serv_time_unassigned[surviving_g])
+    append!(F.total_vehicles_used, G.total_vehicles_used[surviving_g])
+
+    rebuild_octree!(F)
+
+    # Clear G (already consumed)
+    empty!(G.solutions)
+    empty!(G.unassigned_sets)
+    empty!(G.total_deltaV)
+    empty!(G.total_serv_time_unassigned)
+    empty!(G.total_vehicles_used)
+    G.tree = nothing
 end
 
-function _add_to_archive!(A, sol, un)
-    dv = isempty(sol) ? 0.0 : sum(sum(veh.costs) for veh in sol)
-    us = un === nothing ? 0.0 : sum(un["service_times"])
-    push!(A.solutions, sol)
-    push!(A.unassigned_sets, un)
-    push!(A.total_deltaV, dv)
-    push!(A.total_serv_time_unassigned, us)
-    push!(A.total_vehicles_used, length(sol))
-    new_idx = length(A.solutions)
 
-    if A.tree === nothing
-        A.tree = _init_octree(dv, us, length(sol), new_idx)
-    else
-        _expand_to_fit!(A.tree, dv, us, length(sol))
-        octree_insert!(A.tree, new_idx, A)
-    end
-end
-
-Base.@noinline function _seed_archive(sol, un)
-    A = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
-    _add_to_archive!(A, sol, un)
-    return A
-end
 
 function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab;
               nvehicles=20, time_limit=Inf, init_sol=nothing, init_unassigned=nothing)
@@ -1344,10 +1331,14 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
     end
     sim_obj = load_sim()
 
-    F = _seed_archive(init_sol, init_unassigned)
+    dv0 = isempty(init_sol) ? 0.0 : sum(sum(veh.costs) for veh in init_sol)
+    us0 = init_unassigned === nothing ? 0.0 : sum(init_unassigned["service_times"])
+    F = Archive([init_sol], [init_unassigned],
+                [dv0], [us0], [length(init_sol)],
+                _init_octree(dv0, us0, length(init_sol), 1))
 
     op_names = ["opt_times", "opt_times2", "consolidate", "swap_cross", "swap_intra",
-                "create_veh", "destroy_repair", "shaw", "prune"]
+                "create_veh", "destroy_repair", "shaw", "merge"]
     op_times = zeros(9)
 
     operators = [
@@ -1367,26 +1358,45 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
         x = copy_schedule(F.solutions[idx])
         u_x = F.unassigned_sets[idx]
 
-        G = _new_archive()
+        G = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
 
         tasks = [Threads.@spawn op(x, u_x) for op in operators]
         for (k, t) in enumerate(tasks)
             op_times[k] += @elapsed begin
                 new_sol, new_u = fetch(t)
-                _add_to_archive!(G, new_sol, new_u)
+                dv = isempty(new_sol) ? 0.0 : sum(sum(veh.costs) for veh in new_sol)
+                us = new_u === nothing ? 0.0 : sum(new_u["service_times"])
+                push!(G.solutions, new_sol)
+                push!(G.unassigned_sets, new_u)
+                push!(G.total_deltaV, dv)
+                push!(G.total_serv_time_unassigned, us)
+                push!(G.total_vehicles_used, length(new_sol))
             end
         end
 
-        update_archive!(F, G)
-        for j in eachindex(G.solutions)
-            _add_to_archive!(F, G.solutions[j], G.unassigned_sets[j])
-        end
-        op_times[9] += @elapsed prune_archive!(F)
+        op_times[9] += @elapsed merge_archive!(F, G)
         isempty(F.solutions) && break
     end
 
     @info "MDLS operator timing (total seconds across all iterations):" *
           join(["\n  $(op_names[k]) = $(round(op_times[k]; digits=2))s" for k in 1:9])
+
+    # Final flat dominance cleanup (one pass O(N²), guaranteed correct)
+    n = length(F.solutions)
+    dominated = zeros(Bool, n)
+    for i in 1:n
+        for j in 1:n
+            i == j && continue
+            if dominates(F, j, F, i)
+                dominated[i] = true
+                break
+            end
+        end
+    end
+    for idx in findall(dominated) |> sort |> reverse
+        remove_from_archive!(F, idx)
+    end
+    rebuild_octree!(F)
 
     return F
 end
