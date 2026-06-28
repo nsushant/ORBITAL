@@ -263,3 +263,130 @@ function plot_comparison(fronts::Vector{<:Tuple};
 
     return fig
 end
+
+"""
+    plot_spider_comparison(fronts; title)
+
+Radar / spider chart comparing algorithms across all three objectives simultaneously.
+`fronts` is a `Vector` of `(label, Matrix{Float64})` pairs (n_solutions × 3,
+columns: f1_dv, f2_unassigned_time, f3_vehicles).
+
+Each algorithm is summarised by its per-objective minimum (ideal point of its
+Pareto front).  On each spoke, **outer edge = best**, centre = worst — so a
+larger polygon means better overall performance.
+"""
+function plot_spider_comparison(fronts::Vector{<:Tuple};
+                                title::String = "Algorithm comparison — radar") :: Figure
+
+    isempty(fronts) && error("No fronts to plot.")
+
+    obj_labels = ["Total ΔV [m/s]", "Unassigned\ntime [days]", "Vehicles\nused"]
+    alg_colors = [:royalblue, :crimson, :seagreen, :darkorange,
+                  :purple,    :brown,   :teal,     :olive]
+
+    # ── Per-algorithm ideal point (per-objective minimum) ─────────────────────
+    n_alg = length(fronts)
+    bests = Matrix{Float64}(undef, n_alg, 3)
+    for (ai, (_, m)) in enumerate(fronts)
+        for j in 1:3
+            bests[ai, j] = minimum(m[:, j])
+        end
+    end
+
+    # ── Global range for normalization ────────────────────────────────────────
+    gmin = [minimum(bests[:, j]) for j in 1:3]
+    gmax = [maximum(bests[:, j]) for j in 1:3]
+
+    # display value: 1 = best (lowest objective), 0 = worst (highest objective)
+    _display(val, j) = 1.0 - (val - gmin[j]) / max(gmax[j] - gmin[j], 1e-10)
+
+    # ── Spoke geometry (equilateral triangle, spoke 1 points straight up) ─────
+    θ = [π/2 + (j - 1) * 2π/3 for j in 1:3]
+
+    # Polygon vertices for algorithm ai
+    function _polygon(ai)
+        pts = Point2f[]
+        for j in 1:3
+            r = _display(bests[ai, j], j)
+            push!(pts, Point2f(r * cos(θ[j]), r * sin(θ[j])))
+        end
+        push!(pts, pts[1])   # close the loop
+        return pts
+    end
+
+    # ── Figure ────────────────────────────────────────────────────────────────
+    fig = Figure(size = (900, 720))
+    ax  = Axis(fig[1, 1];
+               title              = title,
+               aspect             = DataAspect(),
+               xgridvisible       = false,
+               ygridvisible       = false,
+               xticksvisible      = false,
+               yticksvisible      = false,
+               xticklabelsvisible = false,
+               yticklabelsvisible = false,
+               leftspinevisible   = false,
+               rightspinevisible  = false,
+               topspinevisible    = false,
+               bottomspinevisible = false)
+
+    # ── Background: concentric reference triangles + spoke lines ─────────────
+    for r in (0.25, 0.5, 0.75, 1.0)
+        ring_pts = [Point2f(r * cos(θ[j]), r * sin(θ[j])) for j in 1:3]
+        push!(ring_pts, ring_pts[1])
+        lines!(ax, ring_pts;
+               color     = (:lightgray, 0.9),
+               linewidth = r == 1.0 ? 1.2 : 0.7,
+               linestyle = r == 1.0 ? :solid : :dash)
+        # percentage label on the first spoke
+        if r < 1.0
+            text!(ax, r * cos(θ[1]) + 0.03, r * sin(θ[1]);
+                  text     = string(round(Int, (1 - r) * 100), "%"),
+                  fontsize = 8,
+                  color    = :gray60,
+                  align    = (:left, :center))
+        end
+    end
+    for j in 1:3
+        lines!(ax, [Point2f(0, 0), Point2f(cos(θ[j]), sin(θ[j]))];
+               color     = (:gray, 0.5),
+               linewidth = 1.0)
+    end
+
+    # ── Spoke axis labels ─────────────────────────────────────────────────────
+    label_nudge = [(0.0, 0.20), (0.20, -0.14), (-0.20, -0.14)]
+    for j in 1:3
+        tx = 1.15 * cos(θ[j]) + label_nudge[j][1]
+        ty = 1.15 * sin(θ[j]) + label_nudge[j][2]
+        text!(ax, tx, ty;
+              text     = "$(obj_labels[j])\n▲ $(round(gmin[j]; sigdigits=4))\n▽ $(round(gmax[j]; sigdigits=4))",
+              fontsize = 9,
+              align    = (:center, :center),
+              color    = :black)
+    end
+
+    # ── Per-algorithm polygons ────────────────────────────────────────────────
+    legend_elements = PolyElement[]
+    legend_labels   = String[]
+
+    for (ai, (lbl, _)) in enumerate(fronts)
+        col = alg_colors[mod1(ai, length(alg_colors))]
+        pts = _polygon(ai)
+        poly!(ax, pts[1:end-1];
+              color       = (col, 0.20),
+              strokecolor = col,
+              strokewidth = 2.2)
+        lines!(ax, pts; color = col, linewidth = 2.2)
+        scatter!(ax, [p[1] for p in pts[1:end-1]], [p[2] for p in pts[1:end-1]];
+                 color = col, markersize = 9)
+        push!(legend_elements, PolyElement(color=(col, 0.35), strokecolor=col, strokewidth=2))
+        push!(legend_labels,   lbl)
+    end
+
+    Legend(fig[1, 2], legend_elements, legend_labels;
+           title        = "Algorithm\n(outer = better)",
+           framevisible = true)
+
+    limits!(ax, -1.65, 1.65, -1.55, 1.65)
+    return fig
+end

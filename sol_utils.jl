@@ -1,3 +1,4 @@
+using JSON3
 
 include(joinpath(@__DIR__, "fuel_cost_calc", "gen_cost_table.jl"))
 
@@ -12,6 +13,21 @@ end
 function copy_schedule(schedule)
     [vehicle(copy(v.visitedUID), copy(v.visitedSAT), copy(v.arrivals),
              copy(v.departures), copy(v.costs)) for v in schedule]
+end
+
+function save_schedule_json(schedule, unassigned, path::String)
+    json_sol = [
+        Dict(
+            "visitedUID" => veh.visitedUID,
+            "visitedSAT" => veh.visitedSAT,
+            "arrivals"   => veh.arrivals,
+            "departures" => veh.departures,
+            "costs"      => veh.costs,
+        ) for veh in schedule
+    ]
+    open(path, "w") do f
+        JSON3.write(f, Dict("schedule" => json_sol, "unassigned" => unassigned))
+    end
 end
 
 mutable struct OctNode
@@ -210,10 +226,12 @@ function build_min_dv_table(cost_table, n_nodes)
     return tab
 end
 
+const INFEASIBLE_LEG_COST = 1.0e6
+
 function snap_cost(CostTable, from_idx, to_idx, dep_epoch, arr_epoch)
     dep_snap = clamp(round(dep_epoch / 15.0) * 15.0, 0.0, 400.0)
     arr_snap = clamp(round(arr_epoch / 15.0) * 15.0, 15.0, 400.0)
-    get(CostTable, (from_idx, to_idx, dep_snap, arr_snap), Inf)
+    get(CostTable, (from_idx, to_idx, dep_snap, arr_snap), INFEASIBLE_LEG_COST)
 end
 
 function get_best_next(current_sim_idx, current_time, unrouted_set,

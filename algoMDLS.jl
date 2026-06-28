@@ -6,49 +6,24 @@ include("plots/visualise.jl")
 include("plots/gradients.jl")
 include("fuel_cost_calc/adaptive_grid.jl")
 
-demands = load_demands()
-cost_table = load_cost_table()
-mintof_table = build_min_tof_table()
-min_dv_tab = build_min_dv_table(cost_table, maximum(k[1] for k in keys(cost_table)))
-schedule, unassigned = make_init_schedule(demands, load_sim(),nvehicles=40)
 
-schedule_copy = copy(schedule)
+const J2_MDLS = 1.08263e-3
+const RE_MDLS = 6371.0
+const MU_MDLS = 3.986004418e5
 
-
-if unassigned !== nothing
-    @warn "Unassigned demands" n_unassigned=length(unassigned["UIDs"])
-else
-    @info "All demands assigned to vehicles"
-end
-
-for (v, veh) in enumerate(schedule)
-    for i in 2:length(veh.visitedUID)
-        gap = veh.arrivals[i] - veh.departures[i-1]
-        @info "V$v step $i: $(veh.visitedSAT[i-1]) → $(veh.visitedSAT[i]), gap=$gap days"
-    end
-end
-
-for (v, veh) in enumerate(schedule)
-    for i in eachindex(veh.visitedUID)
-        dt = veh.departures[i] - veh.arrivals[i]
-        if dt > 10
-            @warn "Large block" v i sat=veh.visitedSAT[i] uid=veh.visitedUID[i] arr=veh.arrivals[i] dep=veh.departures[i] dt
-        end
-    end
-end
-
-plot_schedule_gantt(schedule)
 
 
 
 # operators to reduce the delta V of a schedule 
 
-function opt_times(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.20)
+function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.50, ag::Union{Nothing,AdaptiveGrid}=nothing)
+    # Tries all four timing moves per leg and applies the best:
+    # A: shift arrivals[i:end] later (independent)
+    # B: shift departures[1:i-1] earlier (independent)
+    # C: shift arrivals[i:end]+departures[i:end] later (block)
+    # D: shift arrivals[1:i-1]+departures[1:i-1] earlier (block)
 
     schedule = copy_schedule(schedule)
-
-    # shift arrival and departure times independently.  
-
 
     name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
     sat_ids   = demands["sat_identifiers"]
@@ -69,165 +44,131 @@ function opt_times(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.20)
         from_idx  = name_to_idx[from_name]
         to_idx    = name_to_idx[to_name]
         min_tof   = get(MinTOFTable, (from_idx, to_idx), (0.0, 0.0))[1]
-        base_shift = 15.0
-
-        best_cost = legs[n][1]
-        applied_dir = nothing
-
-        # ── Later: shift arrivals[i:end] right ──
-        new_arrs = veh.arrivals[i:end] .+ base_shift
-        new_deps = veh.departures[i:end]
-
-        feasible = true
-        for j in eachindex(new_arrs)
-            uid = veh.visitedUID[i + j - 1]
-            new_arrs[j] > new_deps[j] && (feasible = false; break)
-            uid > 0 && new_arrs[j] + svc_times[uid] > deadlines[uid] && (feasible = false; break)
-        end
-        new_arrs[1] - veh.departures[i-1] < min_tof && (feasible = false)
-
-        if feasible
-            if length(new_arrs) >= 2
-                new_costs = Float64[snap_cost(CostTable,
-                    name_to_idx[veh.visitedSAT[j-1]],
-                    name_to_idx[veh.visitedSAT[j]],
-                    new_deps[j-1], new_arrs[j])
-                    for j in 2:length(new_arrs)]
-                total_new = sum(new_costs)
+        # Adaptive shift: ±1 cell in the adaptive grid. Falls back to 15 days.
+        shift_later, shift_earlier = if ag !== nothing
+            local _idx = get(ag.lookup, (from_idx, to_idx), nothing)
+            if _idx !== nothing
+                _p  = ag.pairs[_idx]
+                _id = clamp(searchsortedlast(_p.deps, veh.departures[i-1]), 1, length(_p.deps)-1)
+                (max(1.0, _p.deps[min(_id+1, length(_p.deps))] - veh.departures[i-1]),
+                 max(1.0, veh.departures[i-1] - _p.deps[max(_id-1, 1)]))
             else
-                total_new = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], new_arrs[1])
-                new_costs = [total_new]
+                (15.0, 15.0)
             end
-            if total_new < best_cost
-                best_cost = total_new
-                applied_dir = :later
-            end
-        end
-
-        # ── Earlier: shift departures[1:i-1] left ──
-        new_deps_up = veh.departures[1:i-1] .- base_shift
-        new_arrs_up = veh.arrivals[1:i-1]
-
-        feasible = true
-        for j in 1:i-1
-            uid = veh.visitedUID[j]
-            veh.arrivals[j] > new_deps_up[j] && (feasible = false; break)
-        end
-        new_arrs_up[1] < 0.0 && (feasible = false)
-        for j in 2:i-1
-            tof_check = new_arrs_up[j] - new_deps_up[j-1]
-            min_tof_j = get(MinTOFTable,
-                (name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]]),
-                (0.0, 0.0))[1]
-            tof_check < min_tof_j && (feasible = false; break)
-        end
-
-        if feasible
-            new_tof = veh.arrivals[i] - new_deps_up[end]
-            new_tof >= min_tof || (feasible = false)
-        end
-
-        if feasible
-            new_costs_up = Float64[snap_cost(CostTable,
-                name_to_idx[veh.visitedSAT[j-1]],
-                name_to_idx[veh.visitedSAT[j]],
-                new_deps_up[j-1], new_arrs_up[j])
-                for j in 2:i-1]
-            dv_target = snap_cost(CostTable, from_idx, to_idx, new_deps_up[end], veh.arrivals[i])
-            total_new = sum(new_costs_up) + dv_target
-            if total_new < best_cost
-                best_cost = total_new
-                applied_dir = :earlier
-            end
-        end
-
-        applied_dir === nothing && continue
-        if applied_dir == :later
-            veh.arrivals[i:end]   = new_arrs
-            veh.departures[i:end] = new_deps
-            veh.costs[i:end]      = new_costs
         else
-            veh.departures[1:i-1] = new_deps_up
-            veh.costs[2:i]        = vcat(new_costs_up, [dv_target])
+            (15.0, 15.0)
         end
-    end
-    return schedule
-end
 
-function opt_times2(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.20)
+        orig_cost   = legs[n][1]
+        best_cost   = orig_cost
+        best_move   = :none
 
-    schedule = copy_schedule(schedule)
-
-    #shifts arrival and departure times simultaneously
-
-    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
-    sat_ids   = demands["sat_identifiers"]
-    svc_times = demands["service_times"]
-    deadlines = demands["demand_deadlines"]
-
-    legs = [(veh.costs[i], v, i) for (v, veh) in enumerate(schedule)
-                                  for i in 2:length(veh.visitedUID)]
-    sort!(legs, by=x->x[1], rev=true)
-    topn = max(1, round(Int, length(legs) * top_pct))
-
-    for n in 1:topn
-        _, v, i = legs[n]
-        veh = schedule[v]
-
-        from_name = veh.visitedSAT[i-1]
-        to_name   = veh.visitedSAT[i]
-        from_idx  = name_to_idx[from_name]
-        to_idx    = name_to_idx[to_name]
-        min_tof   = get(MinTOFTable, (from_idx, to_idx), (0.0, 0.0))[1]
-        base_shift = 15.0
-
-        best_cost = legs[n][1]
-        applied_dir = nothing
-
-        # ── Later: shift block i:end right ──
-        new_arrs = veh.arrivals[i:end] .+ base_shift
-        new_deps = veh.departures[i:end] .+ base_shift
-
-        feasible = true
-        for j in eachindex(new_arrs)
-            uid = veh.visitedUID[i + j - 1]
-            uid > 0 && new_arrs[j] + svc_times[uid] > deadlines[uid] && (feasible = false; break)
+        # ── Move A: shift arrivals[i:end] later (independent) ──
+        a_arrs = veh.arrivals[i:end] .+ shift_later
+        a_deps = veh.departures[i:end]
+        feas_a = a_arrs[1] - veh.departures[i-1] >= min_tof
+        if feas_a
+            for j in eachindex(a_arrs)
+                uid = veh.visitedUID[i + j - 1]
+                (a_arrs[j] > a_deps[j] || (uid > 0 && a_arrs[j] + svc_times[uid] > deadlines[uid])) &&
+                    (feas_a = false; break)
+            end
         end
-        new_arrs[1] - veh.departures[i-1] < min_tof && (feasible = false)
-
-        if feasible
-            new_dv = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], new_arrs[1])
-            if new_dv < best_cost
-                best_cost = new_dv
-                applied_dir = :later
+        if feas_a
+            a_costs = length(a_arrs) >= 2 ?
+                Float64[snap_cost(CostTable, name_to_idx[veh.visitedSAT[i+j-2]],
+                                  name_to_idx[veh.visitedSAT[i+j-1]], a_deps[j-1], a_arrs[j])
+                        for j in 2:length(a_arrs)] :
+                Float64[]
+            total_a = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], a_arrs[1]) +
+                      sum(a_costs)
+            if total_a < best_cost
+                best_cost = total_a; best_move = :A
             end
         end
 
-        # ── Earlier: shift block 1:i-1 left ──
-        new_arrs_up = veh.arrivals[1:i-1] .- base_shift
-        new_deps_up = veh.departures[1:i-1] .- base_shift
-
-        feasible = true
-        for j in 1:i-1
-            new_arrs_up[j] < 0.0 && (feasible = false; break)
+        # ── Move B: shift departures[1:i-1] earlier (independent) ──
+        b_deps_up = veh.departures[1:i-1] .- shift_earlier
+        b_arrs_up = veh.arrivals[1:i-1]
+        feas_b = b_arrs_up[1] >= 0.0
+        if feas_b
+            for j in 1:i-1
+                veh.arrivals[j] > b_deps_up[j] && (feas_b = false; break)
+            end
         end
-
-        if feasible
-            new_dv = snap_cost(CostTable, from_idx, to_idx, new_deps_up[end], veh.arrivals[i])
-            if new_dv < best_cost
-                best_cost = new_dv
-                applied_dir = :earlier
+        if feas_b
+            for j in 2:i-1
+                min_tof_j = get(MinTOFTable,
+                    (name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]]),
+                    (0.0, 0.0))[1]
+                b_arrs_up[j] - b_deps_up[j-1] < min_tof_j && (feas_b = false; break)
+            end
+        end
+        feas_b && veh.arrivals[i] - b_deps_up[end] < min_tof && (feas_b = false)
+        if feas_b
+            b_costs_up = i > 2 ? Float64[snap_cost(CostTable,
+                name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
+                b_deps_up[j-1], b_arrs_up[j]) for j in 2:i-1] : Float64[]
+            dv_b_target = snap_cost(CostTable, from_idx, to_idx, b_deps_up[end], veh.arrivals[i])
+            total_b = sum(b_costs_up) + dv_b_target
+            if total_b < best_cost
+                best_cost = total_b; best_move = :B
             end
         end
 
-        applied_dir === nothing && continue
-        if applied_dir == :later
-            veh.arrivals[i:end]   = new_arrs
-            veh.departures[i:end] = new_deps
+        # ── Move C: shift block arrivals+departures[i:end] later ──
+        c_arrs = veh.arrivals[i:end] .+ shift_later
+        c_deps = veh.departures[i:end] .+ shift_later
+        feas_c = c_arrs[1] - veh.departures[i-1] >= min_tof
+        if feas_c
+            for j in eachindex(c_arrs)
+                uid = veh.visitedUID[i + j - 1]
+                uid > 0 && c_arrs[j] + svc_times[uid] > deadlines[uid] && (feas_c = false; break)
+            end
+        end
+        if feas_c
+            total_c = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], c_arrs[1])
+            if total_c < best_cost
+                best_cost = total_c; best_move = :C
+            end
+        end
+
+        # ── Move D: shift block arrivals+departures[1:i-1] earlier ──
+        d_arrs_up = veh.arrivals[1:i-1] .- shift_earlier
+        d_deps_up = veh.departures[1:i-1] .- shift_earlier
+        feas_d = d_arrs_up[1] >= 0.0
+        if feas_d
+            total_d = snap_cost(CostTable, from_idx, to_idx, d_deps_up[end], veh.arrivals[i])
+            if total_d < best_cost
+                best_cost = total_d; best_move = :D
+            end
+        end
+
+        best_move === :none && continue
+
+        if best_move === :A
+            veh.arrivals[i:end]   = a_arrs
+            veh.departures[i:end] = a_deps
+            veh.costs[i] = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], a_arrs[1])
+            for j in i+1:length(veh.visitedSAT)
+                veh.costs[j] = snap_cost(CostTable,
+                    name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
+                    veh.departures[j-1], veh.arrivals[j])
+            end
+        elseif best_move === :B
+            veh.departures[1:i-1] = b_deps_up
+            b_costs_up2 = i > 2 ? Float64[snap_cost(CostTable,
+                name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
+                b_deps_up[j-1], b_arrs_up[j]) for j in 2:i-1] : Float64[]
+            dv_b2 = snap_cost(CostTable, from_idx, to_idx, b_deps_up[end], veh.arrivals[i])
+            veh.costs[2:i] = vcat(b_costs_up2, [dv_b2])
+        elseif best_move === :C
+            veh.arrivals[i:end]   = c_arrs
+            veh.departures[i:end] = c_deps
             veh.costs[i]          = best_cost
-        else
-            veh.arrivals[1:i-1]   = new_arrs_up
-            veh.departures[1:i-1] = new_deps_up
+        else  # :D
+            veh.arrivals[1:i-1]   = d_arrs_up
+            veh.departures[1:i-1] = d_deps_up
             veh.costs[i]          = best_cost
         end
     end
@@ -238,14 +179,6 @@ end
 
 
 
-function polish(schedule, demands, CostTable, MinTOFTable, sim; n_iters=5)
-    for _ in 1:n_iters
-        schedule = opt_times(schedule, demands, CostTable, MinTOFTable, sim)
-        schedule = swap_intratour(schedule, demands, CostTable, MinTOFTable, sim)
-        schedule = swap_cross_vehicle(schedule, demands, CostTable, MinTOFTable, sim)
-    end
-    return schedule
-end
 
 function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
     unassigned_in=nothing; dv_budget=5000.0, refuel_time=0.5)
@@ -553,13 +486,49 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
         )
     end
 
-    schedule = polish(schedule, demands, CostTable, MinTOFTable, sim)
     return schedule, unassigned
 end
 
 
 
 
+
+
+# ── Bulk vehicle removal + single regret-2 reinsertion pass ──────────────────
+# Removes the k_remove smallest vehicles in one shot, collects all their demands
+# as unassigned, then runs one regret-2 insertion pass to recover what it can.
+function bulk_remove_vehicles(schedule, demands, CostTable, MinTOFTable, sim,
+                               unassigned_in=nothing; k_remove=1)
+
+    schedule = copy_schedule(schedule)
+    length(schedule) <= 1 && return schedule, unassigned_in
+
+    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
+
+    k = min(k_remove, length(schedule) - 1)   # keep at least 1 vehicle
+
+    # Sort vehicles by demand count ascending, remove the k smallest
+    demand_counts = [count(uid -> uid > 0, veh.visitedUID) for veh in schedule]
+    victim_idxs   = partialsortperm(demand_counts, 1:k)
+
+    removed_uids = Int[]
+    for vi in sort(victim_idxs, rev=true)
+        for uid in schedule[vi].visitedUID
+            uid > 0 && push!(removed_uids, uid)
+        end
+        deleteat!(schedule, vi)
+    end
+
+    # Merge with any already-unassigned demands
+    if unassigned_in !== nothing && !isempty(get(unassigned_in, "UIDs", []))
+        append!(removed_uids, unassigned_in["UIDs"])
+    end
+
+    # All freed demands go straight to unassigned — create_vehicle will
+    # build new tours from them in subsequent iterations.
+    unassigned = _merge_unassigned(unassigned_in, removed_uids, demands)
+    return schedule, unassigned
+end
 
 function swap_cross_vehicle(schedule, demands, CostTable, MinTOFTable, sim;
                            k=1, top_n=20)
@@ -948,7 +917,6 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
 
     push!(schedule, vehicle(visited_uids, visited_sats, arrivals, departures, costs))
 
-    schedule = polish(schedule, demands, CostTable, MinTOFTable, sim)
 
     if isempty(unrouted)
         return schedule, unassigned
@@ -1076,12 +1044,15 @@ end
 
 # ── Destroy-and-repair operator ───────────────────────────────────────────────
 function destroy_and_repair(schedule, demands, CostTable, MinTOFTable, min_dv_tab, sim,
-                             unassigned_in=nothing; destroy_frac=0.25)
+                             unassigned_in=nothing; destroy_frac=nothing)
 
     schedule = copy_schedule(schedule)
     name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
     sat_ids   = demands["sat_identifiers"]
     deadlines = demands["demand_deadlines"]
+
+    # Randomise destruction intensity each call: uniform in [0.25, 0.50]
+    frac = isnothing(destroy_frac) ? (0.25 + rand() * 0.25) : destroy_frac
 
     # ── Worst-cost removal ────────────────────────────────────────────────────
     scored = Tuple{Float64, Int, Int}[]
@@ -1100,13 +1071,17 @@ function destroy_and_repair(schedule, demands, CostTable, MinTOFTable, min_dv_ta
     sort!(scored, by = x -> x[1], rev = true)
 
     total_demands = count(x -> x > 0, (uid for veh in schedule for uid in veh.visitedUID))
-    k = max(1, round(Int, total_demands * destroy_frac))
+    k = max(1, round(Int, total_demands * frac))
     k = min(k, length(scored))
+
+    # Sample from top-2k candidates (not always the exact worst k) for diversity
+    pool = scored[1:min(2k, length(scored))]
+    chosen = sort(randperm(length(pool))[1:k])   # random k from pool, sorted desc for safe deletion
 
     removed_uids = Int[]
     to_del = Dict{Int, Vector{Int}}()
-    for ci in 1:k
-        _, v, p = scored[ci]
+    for ci in chosen
+        _, v, p = pool[ci]
         push!(removed_uids, schedule[v].visitedUID[p])
         push!(get!(to_del, v, Int[]), p)
     end
@@ -1133,7 +1108,7 @@ end
 # ── Shaw orbital-relatedness operator ─────────────────────────────────────────
 function shaw_removal_repair(schedule, demands, CostTable, MinTOFTable, min_dv_tab, sim,
                               unassigned_in=nothing;
-                              destroy_frac=0.25, shaw_α=1.0, shaw_β=0.3, shaw_p=6.0)
+                              destroy_frac=nothing, shaw_α=1.0, shaw_β=0.3, shaw_p=3.0)
 
     schedule = copy_schedule(schedule)
     name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
@@ -1146,8 +1121,10 @@ function shaw_removal_repair(schedule, demands, CostTable, MinTOFTable, min_dv_t
                              if veh.visitedUID[p] > 0]
     isempty(all_positions) && return schedule, unassigned_in
 
+    # Randomise destruction intensity each call: uniform in [0.25, 0.50]
+    frac = isnothing(destroy_frac) ? (0.25 + rand() * 0.25) : destroy_frac
     total_demands = length(all_positions)
-    k = max(1, round(Int, total_demands * destroy_frac))
+    k = max(1, round(Int, total_demands * frac))
 
     seed_v, seed_p = rand(all_positions)
     seed_name = schedule[seed_v].visitedSAT[seed_p]
@@ -1255,20 +1232,9 @@ function merge_archive!(F, G)
         return
     end
 
-    # ── Phase A: G vs G (pairwise, k ≤ 8) ──
+    # ── Filter G: drop anything F already dominates (octree, k log N) ──
     g_survive = trues(length(G.solutions))
-    for j1 in eachindex(G.solutions)
-        for j2 in eachindex(G.solutions)
-            j1 == j2 && continue
-            if dominates(G, j2, G, j1)
-                g_survive[j1] = false
-                break
-            end
-        end
-    end
-
-    # ── Phase A: G vs F (octree, k log N) ──
-    for j in findall(g_survive)
+    for j in eachindex(G.solutions)
         if F.tree !== nothing && !isempty(F.solutions)
             if is_dominated(F.tree,
                             G.total_deltaV[j],
@@ -1286,7 +1252,7 @@ function merge_archive!(F, G)
         end
     end
 
-    # ── Phase A: F vs surviving G (flat O(N × k), k ≤ 8) ──
+    # ── Remove from F anything dominated by surviving G ──
     surviving_g = findall(g_survive)
     f_dominated = zeros(Bool, length(F.solutions))
     for i in eachindex(F.solutions)
@@ -1322,8 +1288,265 @@ end
 
 
 
+# ── RAAN-walk resequencing ────────────────────────────────────────────────────
+# Selects the highest-ΔV vehicle and reorders its demands by greedy nearest-RAAN
+# neighbour at the time of each transfer.  Low RAAN delta → low plane-change ΔV.
+function raan_walk_resequence(schedule, demands, CostTable, MinTOFTable, sim)
+    isempty(schedule) && return schedule
+    schedule = copy_schedule(schedule)
+    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
+    sat_ids   = demands["sat_identifiers"]
+    deadlines = demands["demand_deadlines"]
+    svc_times = demands["service_times"]
+
+    # J2 RAAN drift rate [rad/day] for satellite index i
+    function raan_drift(idx)
+        a   = sim.orbital_elements[1, idx]   # semi-major axis [km]
+        inc = sim.orbital_elements[2, idx]   # inclination [rad]
+        n   = sqrt(MU_MDLS / a^3) * 86400.0 # mean motion [rad/day]
+        return -1.5 * n * J2_MDLS * (RE_MDLS / a)^2 * cos(inc)
+    end
+
+    # RAAN at epoch t [days] for satellite index i
+    function raan_at(idx, t)
+        Ω0 = sim.orbital_elements[3, idx]
+        return Ω0 + raan_drift(idx) * t
+    end
+
+    # angular difference in [-π, π]
+    ang_diff(a, b) = mod(a - b + π, 2π) - π
+
+    # Select vehicle with highest total ΔV cost (excluding first depot entry)
+    best_v = argmax([sum(veh.costs) for veh in schedule])
+    veh    = schedule[best_v]
+
+    # Collect real demand positions (uid > 0)
+    demand_positions = [p for p in eachindex(veh.visitedUID) if veh.visitedUID[p] > 0]
+    length(demand_positions) < 2 && return schedule
+
+    demand_uids = [veh.visitedUID[p] for p in demand_positions]
+
+    # Greedy nearest-RAAN-neighbour resequencing
+    # Start from the depot (position 1)
+    depot_name = veh.visitedSAT[1]
+    depot_idx  = name_to_idx[depot_name]
+    depot_dep  = veh.departures[1]
+
+    remaining  = collect(demand_uids)
+    new_order  = Int[]
+    prev_idx   = depot_idx
+    prev_dep   = depot_dep
+
+    while !isempty(remaining)
+        best_uid   = 0
+        best_dRaan = Inf
+        best_arr   = 0.0
+
+        for uid in remaining
+            r_idx    = name_to_idx[sat_ids[uid]]
+            tof_info = get(MinTOFTable, (prev_idx, r_idx), nothing)
+            tof_info === nothing && continue
+            arr      = prev_dep + tof_info[1]
+            arr + svc_times[uid] > deadlines[uid] && continue
+
+            dΩ = abs(ang_diff(raan_at(r_idx, arr), raan_at(prev_idx, prev_dep)))
+            if dΩ < best_dRaan
+                best_dRaan = dΩ
+                best_uid   = uid
+                best_arr   = arr
+            end
+        end
+
+        best_uid == 0 && break   # no feasible next demand
+        push!(new_order, best_uid)
+        filter!(u -> u != best_uid, remaining)
+        prev_idx = name_to_idx[sat_ids[best_uid]]
+        prev_dep = best_arr + svc_times[best_uid]
+    end
+
+    length(new_order) != length(demand_uids) && return schedule  # couldn't resequence all
+
+    # Rebuild vehicle with new order
+    new_uids  = Int[veh.visitedUID[1]]        # depot
+    new_sats  = String[veh.visitedSAT[1]]
+    new_arrs  = Float64[veh.arrivals[1]]
+    new_deps  = Float64[veh.departures[1]]
+    new_costs = Float64[veh.costs[1]]
+
+    p_prev = 1
+    for uid in new_order
+        r_idx    = name_to_idx[sat_ids[uid]]
+        prev_idx2 = name_to_idx[new_sats[end]]
+        tof_info = get(MinTOFTable, (prev_idx2, r_idx), nothing)
+        tof_info === nothing && return schedule
+        arr = new_deps[end] + tof_info[1]
+        arr + svc_times[uid] > deadlines[uid] && return schedule
+        dep = arr + svc_times[uid]
+        dv  = snap_cost(CostTable, prev_idx2, r_idx, new_deps[end], arr)
+        push!(new_uids, uid);     push!(new_sats, sat_ids[uid])
+        push!(new_arrs, arr);     push!(new_deps, dep)
+        push!(new_costs, dv)
+    end
+
+    # Also carry over any depot-return entries from original vehicle
+    for p in eachindex(veh.visitedUID)
+        veh.visitedUID[p] < 0 && p > 1 && (
+            push!(new_uids, veh.visitedUID[p]); push!(new_sats, veh.visitedSAT[p]);
+            push!(new_arrs, veh.arrivals[p]);   push!(new_deps, veh.departures[p]);
+            push!(new_costs, veh.costs[p]))
+    end
+
+    new_dv  = sum(new_costs)
+    old_dv  = sum(veh.costs)
+    new_dv >= old_dv && return schedule   # no improvement
+
+    schedule[best_v] = vehicle(new_uids, new_sats, new_arrs, new_deps, new_costs)
+    return schedule
+end
+
+# ── RAAN-phasing timing search ────────────────────────────────────────────────
+# For the top-k highest-cost legs, computes when the two satellites' RAANs will
+# next be aligned (using J2 drift), then searches the cost table near that epoch
+# for a cheaper departure — a global timing search vs opt_times' local ±1 cell.
+function raan_phasing_timing(schedule, demands, CostTable, MinTOFTable, sim;
+                              k::Int=3, ag=nothing)
+    isempty(schedule) && return schedule
+    schedule    = copy_schedule(schedule)
+    name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
+    ct          = ag !== nothing ? ag : CostTable
+
+    # J2 drift rate [rad/day]
+    function raan_drift(idx)
+        a   = sim.orbital_elements[1, idx]
+        inc = sim.orbital_elements[2, idx]
+        n   = sqrt(MU_MDLS / a^3) * 86400.0
+        return -1.5 * n * J2_MDLS * (RE_MDLS / a)^2 * cos(inc)
+    end
+
+    # Find the epoch (relative to t0, in days) when ΔΩ = 0 mod 2π nearest to t_now
+    function raan_alignment_epoch(idx_f, idx_t, t_now)
+        Ω_f  = sim.orbital_elements[3, idx_f] + raan_drift(idx_f) * t_now
+        Ω_t  = sim.orbital_elements[3, idx_t] + raan_drift(idx_t) * t_now
+        dω   = raan_drift(idx_t) - raan_drift(idx_f)
+        abs(dω) < 1e-12 && return t_now  # same drift rate → always aligned (or never)
+        dΩ0  = mod(Ω_t - Ω_f, 2π)
+        # time to alignment: dΩ0 + dω*(t - t_now) = 0  →  t = t_now - dΩ0/dω
+        dt   = -dΩ0 / dω
+        # get nearest future alignment
+        period = abs(2π / dω)
+        while dt < 0; dt += period; end
+        return t_now + dt
+    end
+
+    # Collect all legs with their costs
+    scored = Tuple{Float64, Int, Int}[]   # (cost, veh_idx, pos)
+    for (vi, veh) in enumerate(schedule)
+        for p in 2:length(veh.visitedUID)
+            veh.visitedUID[p] > 0 || continue  # skip depot entries
+            push!(scored, (veh.costs[p], vi, p))
+        end
+    end
+    sort!(scored, by=x->x[1], rev=true)
+    top = scored[1:min(k, length(scored))]
+
+    # Try to shift each leg to its RAAN alignment epoch
+    for (_, vi, p) in top
+        veh      = schedule[vi]
+        from_idx = name_to_idx[veh.visitedSAT[p-1]]
+        to_idx   = name_to_idx[veh.visitedSAT[p]]
+        uid      = veh.visitedUID[p]
+        uid > 0 || continue
+
+        uid_pos  = findfirst(==(uid), demands["UIDs"])
+        uid_pos === nothing && continue
+        deadline = demands["demand_deadlines"][uid_pos]
+        svc_time = demands["service_times"][uid_pos]
+
+        t_align = raan_alignment_epoch(from_idx, to_idx, veh.departures[p-1])
+        tof_info = get(MinTOFTable, (from_idx, to_idx), nothing)
+        tof_info === nothing && continue
+        min_tof  = tof_info[1]
+
+        # Search ±30 days around alignment epoch in cost table (snap to 15-day grid)
+        best_dep  = veh.departures[p-1]
+        best_cost = veh.costs[p]
+
+        for dep_shift in -30.0:15.0:30.0
+            dep_try = t_align + dep_shift
+            dep_try < veh.departures[p-1] && continue   # can't go back in time
+            arr_try = dep_try + min_tof
+            arr_try + svc_time > deadline && continue
+            c = snap_cost(ct, from_idx, to_idx, dep_try, arr_try)
+            isfinite(c) && c < best_cost && (best_dep = dep_try; best_cost = c)
+        end
+
+        best_dep == veh.departures[p-1] && continue  # no improvement found
+
+        Δ = best_dep - veh.departures[p-1]
+        Δ <= 0 && continue
+
+        # Minimum departure from p-1: service must be complete (dwell is free)
+        uid_prev = veh.visitedUID[p-1]
+        svc_prev = uid_prev < 0 ? REFUEL_TIME :
+                   demands["service_times"][findfirst(==(uid_prev), demands["UIDs"])]
+        best_dep < veh.arrivals[p-1] + svc_prev && continue
+
+        arr_new = best_dep + min_tof
+        arr_new + svc_time > deadline && continue
+
+        # Check all downstream deadline feasibility
+        feasible_phase = true
+        for j in p+1:length(veh.visitedUID)
+            uid_j = veh.visitedUID[j]
+            if uid_j > 0
+                pos_j = findfirst(==(uid_j), demands["UIDs"])
+                if pos_j !== nothing &&
+                   veh.arrivals[j] + Δ + demands["service_times"][pos_j] > demands["demand_deadlines"][pos_j]
+                    feasible_phase = false; break
+                end
+            end
+        end
+        feasible_phase || continue
+
+        # Apply: set dwell at p-1, propagate Δ to p and all downstream
+        old_total = sum(veh.costs)
+        veh.departures[p-1] = best_dep
+        veh.arrivals[p]     = arr_new
+        veh.departures[p]   = arr_new + svc_time
+        veh.costs[p]        = snap_cost(ct, from_idx, to_idx, best_dep, arr_new)
+        for j in p+1:length(veh.visitedUID)
+            veh.arrivals[j]   += Δ
+            veh.departures[j] += Δ
+        end
+        for j in p+1:length(veh.visitedUID)
+            fi = name_to_idx[veh.visitedSAT[j-1]]
+            ti = name_to_idx[veh.visitedSAT[j]]
+            veh.costs[j] = snap_cost(ct, fi, ti, veh.departures[j-1], veh.arrivals[j])
+        end
+        # Revert if no net improvement
+        if sum(veh.costs) >= old_total
+            veh.departures[p-1] = best_dep - Δ
+            veh.arrivals[p]     = arr_new - Δ
+            veh.departures[p]   = (arr_new - Δ) + svc_time
+            veh.costs[p]        = snap_cost(ct, from_idx, to_idx, veh.departures[p-1], veh.arrivals[p])
+            for j in p+1:length(veh.visitedUID)
+                veh.arrivals[j]   -= Δ
+                veh.departures[j] -= Δ
+            end
+            for j in p+1:length(veh.visitedUID)
+                fi = name_to_idx[veh.visitedSAT[j-1]]
+                ti = name_to_idx[veh.visitedSAT[j]]
+                veh.costs[j] = snap_cost(ct, fi, ti, veh.departures[j-1], veh.arrivals[j])
+            end
+        end
+    end
+
+    return schedule
+end
+
 function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab;
-              nvehicles=20, time_limit=Inf, init_sol=nothing, init_unassigned=nothing)
+              nvehicles=20, time_limit=Inf, init_sol=nothing, init_unassigned=nothing,
+              dv_budget=5000.0)
 
     t_start = time()
     if isnothing(init_sol)
@@ -1337,31 +1560,58 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
                 [dv0], [us0], [length(init_sol)],
                 _init_octree(dv0, us0, length(init_sol), 1))
 
-    op_names = ["opt_times", "opt_times2", "consolidate", "swap_cross", "swap_intra",
-                "create_veh", "destroy_repair", "shaw", "merge"]
-    op_times = zeros(9)
-
-    operators = [
-        (s, u) -> (opt_times(s, demands, cost_table, mintof_table, sim_obj), u),
-        (s, u) -> (opt_times2(s, demands, cost_table, mintof_table, sim_obj), u),
-        (s, u) -> consolidate_demands(s, demands, cost_table, mintof_table, sim_obj, u),
-        (s, u) -> (swap_cross_vehicle(s, demands, cost_table, mintof_table, sim_obj), u),
-        (s, u) -> (swap_intratour(s, demands, cost_table, mintof_table, sim_obj), u),
-        (s, u) -> create_vehicle(s, demands, u, cost_table, mintof_table, sim_obj),
+    # ── ΔV operator pool (3 operators, one sampled randomly each iteration) ────
+    dv_op_names = ["opt_times", "destroy_repair", "shaw"]
+    dv_operators = [
+        (s, u) -> (opt_times_combined(s, demands, cost_table, mintof_table, sim_obj), u),
         (s, u) -> destroy_and_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
         (s, u) -> shaw_removal_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
     ]
 
+    op_times     = zeros(3)   # [consolidate, create_veh, dv_op]
+    dv_op_counts = zeros(Int, length(dv_operators))
+
     for iter in 1:maxiter
         time() - t_start > time_limit && break
         idx = rand(1:length(F.solutions))
-        x = copy_schedule(F.solutions[idx])
+        x   = copy_schedule(F.solutions[idx])
         u_x = F.unassigned_sets[idx]
 
         G = Archive(Vector{Vector{vehicle}}(), Vector{Union{Nothing,Dict}}(), Float64[], Float64[], Int[], nothing)
 
-        tasks = [Threads.@spawn op(x, u_x) for op in operators]
-        for (k, t) in enumerate(tasks)
+        # ── Vehicles objective: bulk remove then single regret-2 reinsert ───────
+        n_veh     = length(x)
+        k_remove  = max(1, round(Int, rand() * 0.7 * n_veh + 0.2 * n_veh))  # Uniform[20%,90%] of vehicles
+        cons_task = Threads.@spawn bulk_remove_vehicles(x, demands, cost_table, mintof_table,
+                                                        sim_obj, u_x; k_remove=k_remove)
+
+        # ── Unserved objective: create_vehicle only if unassigned demands exist
+        has_unassigned = u_x !== nothing && !isempty(get(u_x, "UIDs", []))
+        create_task = if has_unassigned
+            k_add = max(1, min(
+                round(Int, rand() * 0.9 * n_veh + 0.1 * n_veh),  # Uniform[10%,100%] of vehicles
+                nvehicles - n_veh                                   # respect max vehicle limit
+            ))
+            Threads.@spawn begin
+                s, u = x, u_x
+                for _ in 1:k_add
+                    s, u = create_vehicle(s, demands, u, cost_table, mintof_table, sim_obj; dv_budget=dv_budget)
+                end
+                (s, u)
+            end
+        else
+            nothing
+        end
+
+        # ── ΔV objective: randomly sampled operator ───────────────────────────
+        dv_idx  = rand(1:length(dv_operators))
+        dv_op   = dv_operators[dv_idx]
+        dv_op_counts[dv_idx] += 1
+        dv_task = Threads.@spawn dv_op(x, u_x)
+
+        # ── Collect results into G ────────────────────────────────────────────
+        for (k, t) in enumerate([cons_task, create_task, dv_task])
+            t === nothing && continue
             op_times[k] += @elapsed begin
                 new_sol, new_u = fetch(t)
                 dv = isempty(new_sol) ? 0.0 : sum(sum(veh.costs) for veh in new_sol)
@@ -1374,23 +1624,27 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
             end
         end
 
-        op_times[9] += @elapsed merge_archive!(F, G)
+        merge_archive!(F, G)
         isempty(F.solutions) && break
     end
 
-    @info "MDLS operator timing (total seconds across all iterations):" *
-          join(["\n  $(op_names[k]) = $(round(op_times[k]; digits=2))s" for k in 1:9])
+    @info "MDLS operator timing:" *
+          "\n  consolidate = $(round(op_times[1]; digits=2))s" *
+          "\n  create_veh  = $(round(op_times[2]; digits=2))s" *
+          "\n  dv_ops      = $(round(op_times[3]; digits=2))s"
+    @info "ΔV operator usage:" *
+          join(["\n  $(dv_op_names[k]) = $(dv_op_counts[k])" for k in eachindex(dv_op_names)])
 
-    # Final flat dominance cleanup (one pass O(N²), guaranteed correct)
-    n = length(F.solutions)
-    dominated = zeros(Bool, n)
-    for i in 1:n
-        for j in 1:n
-            i == j && continue
-            if dominates(F, j, F, i)
-                dominated[i] = true
-                break
-            end
+    # Final dominance cleanup using the octree (O(N log N))
+    rebuild_octree!(F)
+    dominated = zeros(Bool, length(F.solutions))
+    for i in eachindex(F.solutions)
+        if F.tree !== nothing
+            dominated[i] = is_dominated(F.tree,
+                                        F.total_deltaV[i],
+                                        F.total_serv_time_unassigned[i],
+                                        F.total_vehicles_used[i],
+                                        F, i)
         end
     end
     for idx in findall(dominated) |> sort |> reverse

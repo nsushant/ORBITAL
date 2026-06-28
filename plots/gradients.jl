@@ -161,3 +161,49 @@ function plot_refinement_comparison(name1::String, name2::String, base_ct::Dict,
 
     return fig
 end
+
+function plot_grid_comparison(name1::String, name2::String,
+                               base_ct::Dict, ag, sim)
+    idx1 = sim.id_to_idx[name1]
+    idx2 = sim.id_to_idx[name2]
+
+    matching = [(k, v) for (k, v) in base_ct if k[1] == idx1 && k[2] == idx2]
+    deps_u = sort(unique(Float64[k[3] for (k, _) in matching]))
+    arrs_u = sort(unique(Float64[k[4] for (k, _) in matching]))
+
+    p = ag.pairs[ag.lookup[(idx1, idx2)]]
+
+    fig = Figure(size=(720, 660), backgroundcolor=:white)
+    ax  = Axis(fig[1, 1];
+               xlabel = "Departure [days]",
+               ylabel = "Arrival [days]",
+               title  = "Grid comparison: $name1 → $name2",
+               backgroundcolor = :white,
+               xgridvisible = false,
+               ygridvisible = false)
+
+    for d in deps_u
+        vlines!(ax, d; color=(:gray, 0.4), linewidth=0.8, linestyle=:dash)
+    end
+    for a in arrs_u
+        hlines!(ax, a; color=(:gray, 0.4), linewidth=0.8, linestyle=:dash)
+    end
+
+    for d in p.deps
+        vlines!(ax, d; color=:black, linewidth=1.2)
+    end
+    for a in p.arrs
+        hlines!(ax, a; color=:black, linewidth=1.2)
+    end
+
+    n_u = length(deps_u) * length(arrs_u)
+    n_a = length(p.deps) * length(p.arrs)
+    axislegend(ax,
+        [LineElement(color=(:gray, 0.4), linestyle=:dash, linewidth=0.8),
+         LineElement(color=:black, linewidth=1.2)],
+        ["Uniform ($(length(deps_u))×$(length(arrs_u)) = $n_u)",
+         "Adaptive ($(length(p.deps))×$(length(p.arrs)) = $n_a)"],
+        position=:lt)
+
+    return fig
+end

@@ -174,7 +174,8 @@ function generate_demands(simulation, demand_params::Dict) :: Dict{String, Any}
     demands = Dict{String, Any}(
         "sat_identifiers" => sat_identifiers,
         "demand_deadlines" => demand_deadlines,
-        "service_times"    => service_times_out
+        "service_times"    => service_times_out,
+        "UIDs"             => collect(1:num_demands)
     )
 
     mkpath("outputs/demands")

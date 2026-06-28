@@ -17,7 +17,7 @@ using Printf
 
 const ADAPTIVE_GRID_PATH = "outputs/cost_table_adaptive.jld2"
 const MIN_GRID_STEP = 1.0      # days — never split below this
-const MAX_GRID_STEP = 30.0     # days — never coarsen beyond this
+const MAX_GRID_STEP = Inf       # days — no coarsening cap (low-gradient regions merge freely)
 const DV_THRESHOLD  = 1e7
 
 # ── Data structures ──────────────────────────────────────────────────────────
@@ -272,19 +272,18 @@ function gen_adaptive_cost_table(sim, base_ct::Dict; target_dv::Float64=50.0,
     groups = _group_by_pair(base_ct)
     @info "  $(length(groups)) unique pairs ($(round(time()-t0; digits=2))s)"
 
-    # Detect uniform grid dimensions
-    all_deps = sort(unique(Float64[k[3] for (k, _) in base_ct]))
-    all_arrs = sort(unique(Float64[k[4] for (k, _) in base_ct]))
-
     @info "Phase 2: building adaptive grid structures (target_dv=$target_dv)..."
     t1 = time()
     ag = AdaptiveGrid([], Dict{Tuple{Int,Int}, Int}())
 
     prog = Progress(length(groups); desc="Analysing gradients: ", barlen=40, showspeed=true)
     for ((f, t), entries) in groups
-        nd, na, nz = _build_refined_grid(all_deps, all_arrs, entries, target_dv)
-        push!(ag.pairs, AdaptivePair(f, t, nd, na, nz))
+        deps_p = sort(unique(Float64[e[1] for e in entries]))
+        arrs_p = sort(unique(Float64[e[2] for e in entries]))
+        Z_init = _build_matrix(deps_p, arrs_p, entries)
+        push!(ag.pairs, AdaptivePair(f, t, deps_p, arrs_p, Z_init))
         ag.lookup[(f,t)] = length(ag.pairs)
+        refine_grid_structure!(ag, f, t, entries, target_dv)
         next!(prog)
     end
     finish!(prog)
