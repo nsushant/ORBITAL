@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-N_TRIALS=${N_TRIALS:-10}
+N_TRIALS=${N_TRIALS:-5}
 SCENARIOS="tight_normal loose_uniform tight_low_dv loose_high_dv"
 JULIA="julia --project=. -t auto"
 PYTHON="python"
@@ -57,7 +57,7 @@ for scenario in $SCENARIOS; do
 
         # Python GAs (NSGA-III, MOEA-D, PSO)
         echo "  [GAs] starting …"
-        $PYTHON run_ga_trial.py "$scenario" "$trial"
+        $PYTHON run_ga_trial.py "$scenario" "$trial" --dv-budget 5000.0
     done
 done
 

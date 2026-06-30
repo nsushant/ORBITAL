@@ -26,7 +26,7 @@ if not os.path.exists(src):
 df        = pd.read_csv(src)
 instances = ["tight_normal", "loose_uniform", "tight_low_dv", "loose_high_dv"]
 instances = [i for i in instances if i in df["instance"].unique()]
-alg_names = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
+alg_names = ["MDLS", "NSGA-III", "MOPSO-CD"]
 
 SCENARIO_LABELS = {
     "tight_normal":   "Scenario 1",
@@ -44,8 +44,7 @@ df["f1_dv_norm"] = (df["f1_dv"] - dv_min) / dv_range
 COLOURS = {
     "MDLS":     "#1f77b4",
     "NSGA-III": "#ff7f0e",
-    "MOEA/D":   "#2ca02c",
-    "PSO":      "#d62728",
+    "MOPSO-CD": "#d62728",
 }
 
 FS       = 22   # base font size

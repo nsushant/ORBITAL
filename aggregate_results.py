@@ -26,20 +26,19 @@ from scipy.stats import gaussian_kde
 # Config
 # ---------------------------------------------------------------------------
 
-ALG_NAMES = ["mdls", "nsga3", "moead", "pso"]
-ALG_LABELS = {"mdls": "MDLS", "nsga3": "NSGA-III", "moead": "MOEA/D", "pso": "PSO"}
+ALG_NAMES = ["mdls", "nsga3", "pso"]
+ALG_LABELS = {"mdls": "MDLS", "nsga3": "NSGA-III", "pso": "MOPSO-CD"}
 SCENARIOS  = ["tight_normal", "loose_uniform", "tight_low_dv", "loose_high_dv"]
-N_TRIALS   = 10
+N_TRIALS   = 5
 RES_DIR    = "outputs/exp_results"
 OUT_DIR    = "outputs"
 PENALTY    = 1e6
-OBJ_COLS   = ["f1_dv", "f2_unassigned_time", "f3_vehicles"]
+OBJ_COLS   = ["f1_dv", "f2_unrecovered_value", "f3_vehicles"]
 
 ALG_COLORS = {
     "mdls":   "#1f77b4",
     "nsga3":  "#ff7f0e",
-    "moead":  "#2ca02c",
-    "pso":    "#d62728",
+    "pso":    "#d62728",  # MOPSO-CD
 }
 
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -55,6 +54,9 @@ def load_front(scenario, alg, trial):
     df = pd.read_csv(path)
     if df.empty:
         return None
+    # backwards-compat: rename old column if present
+    if "f2_unassigned_time" in df.columns:
+        df = df.rename(columns={"f2_unassigned_time": "f2_unrecovered_value"})
     df = df[df["f1_dv"] < PENALTY]
     return df if not df.empty else None
 
@@ -81,15 +83,18 @@ print("\nComputing per-scenario reference points …")
 
 # Problem-motivated fixed worst-case bounds (independent of which algorithms ran).
 # f1: every demand requires a full depot-return leg at max ΔV budget
-# f2: all demands unserviced (N_DEMANDS × SERVICE_TIME days)
+# f2: expected do-nothing loss (mixed V1/V2 fleet) + 10% safety margin
 # f3: maximum fleet size + small buffer
-N_DEMANDS    = 200
-SERVICE_TIME = 3.0
-DV_BUDGET    = 5000.0
-N_VEHICLES   = 20
-FIXED_NADIR  = np.array([N_DEMANDS * DV_BUDGET,    # f1: 1 000 000 m/s
-                          N_DEMANDS * SERVICE_TIME,  # f2: 600 days
-                          N_VEHICLES + 5])           # f3: 25 vehicles
+N_DEMANDS         = 200
+V1_ASSET_VAL      = 1_251_000.0
+V2_ASSET_VAL      = 3_250_000.0
+V2_FRACTION       = 0.30
+DV_BUDGET         = 5000.0
+N_VEHICLES        = 20
+EXPECTED_AVG_ASSET_VAL = V2_FRACTION * V2_ASSET_VAL + (1 - V2_FRACTION) * V1_ASSET_VAL
+FIXED_NADIR  = np.array([N_DEMANDS * DV_BUDGET,                          # f1: 1 000 000 m/s
+                          N_DEMANDS * EXPECTED_AVG_ASSET_VAL * 1.10,     # f2: ~407 M USD
+                          N_VEHICLES + 5])                               # f3: 25 vehicles
 
 scenario_meta = {}  # sc → {ideal, nadir, ref}
 for sc in SCENARIOS:
@@ -147,15 +152,15 @@ for sc in SCENARIOS:
             # Store front points (raw + normalised)
             for i in range(len(pts_raw)):
                 front_rows.append({
-                    "instance":           sc,
-                    "algorithm":          ALG_LABELS[alg],
-                    "trial":              t,
-                    "f1_dv":              pts_raw[i, 0],
-                    "f2_unassigned_time": pts_raw[i, 1],
-                    "f3_vehicles":        pts_raw[i, 2],
-                    "f1_dv_norm":         pts_norm[i, 0],
-                    "f2_unassigned_norm": pts_norm[i, 1],
-                    "f3_vehicles_norm":   pts_norm[i, 2],
+                    "instance":              sc,
+                    "algorithm":             ALG_LABELS[alg],
+                    "trial":                 t,
+                    "f1_dv":                 pts_raw[i, 0],
+                    "f2_unrecovered_value":  pts_raw[i, 1],
+                    "f3_vehicles":           pts_raw[i, 2],
+                    "f1_dv_norm":            pts_norm[i, 0],
+                    "f2_unassigned_norm":    pts_norm[i, 1],
+                    "f3_vehicles_norm":      pts_norm[i, 2],
                 })
 
 hv_df    = pd.DataFrame(hv_rows)
@@ -260,12 +265,12 @@ for sc in SCENARIOS:
             ax.set_title(ALG_LABELS[alg])
             continue
         pts = pd.concat(pts_list)
-        plot_kde_shadow(ax, pts["f1_dv"].values, pts["f2_unassigned_time"].values,
+        plot_kde_shadow(ax, pts["f1_dv"].values, pts["f2_unrecovered_value"].values,
                         ALG_COLORS[alg], ALG_LABELS[alg])
         ax.set_title(ALG_LABELS[alg], fontsize=10)
         ax.set_xlabel("ΔV [m/s]")
         if idx == 0:
-            ax.set_ylabel("Unserved time [days]")
+            ax.set_ylabel("Unrecovered value [USD]")
         ax.grid(True, linestyle="--", alpha=0.4)
     fig.suptitle(f"KDE shadow — {sc.replace('_', ' ')}", fontsize=12)
     plt.tight_layout()

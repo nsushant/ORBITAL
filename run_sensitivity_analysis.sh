@@ -13,14 +13,15 @@
 
 set -euo pipefail
 
-N_TRIALS=${N_TRIALS:-10}
+N_TRIALS=${N_TRIALS:-5}
 JULIA="julia --project=. -t auto"
 PYTHON="python"
 DEM_DIR="outputs/sensitivity_demands"
 RES_DIR="outputs/sensitivity_results"
 
 # Sub-experiments to run (default: all)
-SE_FILTER=("${@}")   # e.g. ("dvbudget") or ("size" "disttype") or empty = all
+SE_FILTER=()
+[[ $# -gt 0 ]] && SE_FILTER=("$@")   # e.g. ("dvbudget") or ("size" "disttype") or empty = all
 
 run_se() {
     # Returns 0 if this SE should run, 1 otherwise
@@ -68,9 +69,9 @@ run_pair() {
     echo "  [MDLS]  key=$key trial=$trial dv_budget=$dv_budget"
     $JULIA run_mdls_trial.jl "$key" "$trial" "$DEM_DIR" "$RES_DIR" "$dv_budget"
 
-    echo "  [GAs]   key=$key trial=$trial"
+    echo "  [GAs]   key=$key trial=$trial dv_budget=$dv_budget"
     $PYTHON run_ga_trial.py "$key" "$trial" \
-        --demand-dir "$DEM_DIR" --result-dir "$RES_DIR"
+        --demand-dir "$DEM_DIR" --result-dir "$RES_DIR" --dv-budget "$dv_budget"
 }
 
 # SE1 — instance size

@@ -7,11 +7,17 @@
 #
 # Run: julia --project=. -t auto numerical_experiments_se4.jl
 
-using CSV, DataFrames, Printf, PyCall
+using CSV, DataFrames, Printf, PyCall, JSON3
 const moocore = pyimport("moocore")
 
 const NUMEXP_INCLUDE = true
 include("GATests.jl")
+
+const SAT_VALUES_PATH_SE4 = joinpath(@__DIR__, "outputs", "sat_values.json")
+const SAT_VALUES_SE4 = isfile(SAT_VALUES_PATH_SE4) ?
+    JSON3.read(read(SAT_VALUES_PATH_SE4), Dict{String,Float64}) :
+    Dict{String,Float64}()
+isempty(SAT_VALUES_SE4) && @warn "sat_values.json not found — run starlink/run_starlink.jl first"
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Shared settings
@@ -56,7 +62,8 @@ function run_subexperiment_se4(levels::Vector,
 
         for trial in 1:N_TRIALS_SE4
             seed         = seed_fn(trial, li, lv)
-            trial_params = merge(base_params, Dict("seed" => seed))
+            trial_params = merge(base_params, Dict("seed"       => seed,
+                                                   "sat_values" => SAT_VALUES_SE4))
 
             trial_demands = generate_demands(_ga_sim, trial_params)
 
@@ -70,10 +77,12 @@ function run_subexperiment_se4(levels::Vector,
             results     = run_all_algorithms(ctx; budget_evals = BUDGET_EVALS,
                                              init_copies = init_copies)
 
+            total_val = sum(trial_demands["asset_values"])
             for alg in ALG_NAMES_SE4
                 front, t  = results[alg]
                 front_fin = front[vec(all(isfinite, front; dims=2)), :]
-                push!(front_store[(li, alg)], front_fin)
+                tagged    = hcat(front_fin, fill(total_val, size(front_fin, 1)))
+                push!(front_store[(li, alg)], tagged)
                 push!(time_store[(li,  alg)], t)
             end
 
@@ -82,7 +91,7 @@ function run_subexperiment_se4(levels::Vector,
     end
 
     # ── Normalisation (per sub-experiment) ───────────────────────────────────
-    all_pts = vcat([front_store[(li, alg)][t]
+    all_pts = vcat([front_store[(li, alg)][t][:, 1:3]
                     for li  in 1:n_levels
                     for alg in ALG_NAMES_SE4
                     for t   in 1:N_TRIALS_SE4
@@ -106,12 +115,15 @@ function run_subexperiment_se4(levels::Vector,
     pf_factor  = String[]; pf_alg = String[]; pf_trial = Int[]
     pf_f1_norm = Float64[]; pf_f2_norm = Float64[]; pf_f3_norm = Float64[]
     pf_f1      = Float64[]; pf_f2      = Float64[]; pf_f3      = Float64[]
+    pf_valrec  = Float64[]; pf_totval  = Float64[]
 
     for (li, lv) in enumerate(levels)
         label = lv.label
         for alg in ALG_NAMES_SE4
             for trial in 1:N_TRIALS_SE4
-                front_fin = front_store[(li, alg)][trial]
+                front_4   = front_store[(li, alg)][trial]
+                front_fin = front_4[:, 1:3]
+                total_val = size(front_4, 1) > 0 ? front_4[1, 4] : 0.0
                 front_u   = size(front_fin, 1) > 0 ? unique(front_fin, dims=1) : front_fin
                 hv = if size(front_u, 1) == 0
                     0.0
@@ -128,6 +140,7 @@ function run_subexperiment_se4(levels::Vector,
                         push!(pf_factor, label); push!(pf_alg, alg); push!(pf_trial, trial)
                         push!(pf_f1_norm, norm[i,1]); push!(pf_f2_norm, norm[i,2]); push!(pf_f3_norm, norm[i,3])
                         push!(pf_f1, front_u[i,1]);   push!(pf_f2, front_u[i,2]);   push!(pf_f3, front_u[i,3])
+                        push!(pf_valrec, total_val - front_u[i,2]); push!(pf_totval, total_val)
                     end
                 end
             end
@@ -143,12 +156,13 @@ function run_subexperiment_se4(levels::Vector,
     @info "  Saved: $csv_path  ($(nrow(df_hv)) rows)"
 
     pf_csv = replace(csv_path, ".csv" => "_fronts.csv")
-    df_pf  = DataFrame(factor_col          => pf_factor,  :algorithm          => pf_alg,
-                       :trial              => pf_trial,
-                       :f1_dv_norm         => pf_f1_norm, :f2_unassigned_norm => pf_f2_norm,
-                       :f3_vehicles_norm   => pf_f3_norm,
-                       :f1_dv              => pf_f1,      :f2_unassigned_time => pf_f2,
-                       :f3_vehicles        => pf_f3)
+    df_pf  = DataFrame(factor_col               => pf_factor,  :algorithm               => pf_alg,
+                       :trial                   => pf_trial,
+                       :f1_dv_norm              => pf_f1_norm, :f2_unrecovered_norm     => pf_f2_norm,
+                       :f3_vehicles_norm        => pf_f3_norm,
+                       :f1_dv                   => pf_f1,      :f2_unrecovered_value    => pf_f2,
+                       :f3_vehicles             => pf_f3,      :value_recovered         => pf_valrec,
+                       :total_demand_value      => pf_totval)
     CSV.write(pf_csv, df_pf)
     @info "  Saved: $pf_csv  ($(nrow(df_pf)) front points)"
 end

@@ -14,8 +14,7 @@ OUT = "outputs"
 COLOURS = {
     "MDLS":     "#1f77b4",
     "NSGA-III": "#ff7f0e",
-    "MOEA/D":   "#2ca02c",
-    "PSO":      "#d62728",
+    "MOPSO-CD": "#d62728",
 }
 
 SCENARIO_LABELS = {
@@ -32,7 +31,7 @@ FS_TITLE = 24
 
 OBJECTIVES = [
     ("f1_dv_norm",         "f₁  ΔV  (normalised)"),
-    ("f2_unassigned_norm", "f₂  Unassigned time  (normalised)"),
+    ("f2_unassigned_norm", "f₂  Unrecovered value  (normalised)"),
     ("f3_vehicles_norm",   "f₃  Vehicles used  (normalised)"),
 ]
 
@@ -79,7 +78,7 @@ src = f"{OUT}/pareto_fronts.csv"
 if os.path.exists(src):
     pf = pd.read_csv(src)
     norm_cols = ["f1_dv_norm", "f2_unassigned_norm", "f3_vehicles_norm"]
-    alg_names = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
+    alg_names = ["MDLS", "NSGA-III", "MOPSO-CD"]
     instances  = list(pf["instance"].unique())
     group_cols = ["instance", "algorithm", "trial"]
     if "init_nvehicles" in pf.columns:
@@ -137,7 +136,7 @@ else:
 hv_path = f"{OUT}/numerical_experiments.csv"
 if os.path.exists(hv_path):
     hv = pd.read_csv(hv_path)
-    alg_names = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
+    alg_names = ["MDLS", "NSGA-III", "MOPSO-CD"]
     instances  = list(hv["instance"].unique())
     n_inst     = len(instances)
 

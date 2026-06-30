@@ -17,11 +17,9 @@ const MU_MDLS = 3.986004418e5
 # operators to reduce the delta V of a schedule 
 
 function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.50, ag::Union{Nothing,AdaptiveGrid}=nothing)
-    # Tries all four timing moves per leg and applies the best:
-    # A: shift arrivals[i:end] later (independent)
-    # B: shift departures[1:i-1] earlier (independent)
-    # C: shift arrivals[i:end]+departures[i:end] later (block)
-    # D: shift arrivals[1:i-1]+departures[1:i-1] earlier (block)
+    # Tries two timing block moves per leg and applies the best:
+    # C: shift arrivals[i:end]+departures[i:end] later (block — preserves no-wait invariant)
+    # D: shift arrivals[1:i-1]+departures[1:i-1] earlier (block — preserves no-wait invariant)
 
     schedule = copy_schedule(schedule)
 
@@ -63,59 +61,6 @@ function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_
         best_cost   = orig_cost
         best_move   = :none
 
-        # ── Move A: shift arrivals[i:end] later (independent) ──
-        a_arrs = veh.arrivals[i:end] .+ shift_later
-        a_deps = veh.departures[i:end]
-        feas_a = a_arrs[1] - veh.departures[i-1] >= min_tof
-        if feas_a
-            for j in eachindex(a_arrs)
-                uid = veh.visitedUID[i + j - 1]
-                (a_arrs[j] > a_deps[j] || (uid > 0 && a_arrs[j] + svc_times[uid] > deadlines[uid])) &&
-                    (feas_a = false; break)
-            end
-        end
-        if feas_a
-            a_costs = length(a_arrs) >= 2 ?
-                Float64[snap_cost(CostTable, name_to_idx[veh.visitedSAT[i+j-2]],
-                                  name_to_idx[veh.visitedSAT[i+j-1]], a_deps[j-1], a_arrs[j])
-                        for j in 2:length(a_arrs)] :
-                Float64[]
-            total_a = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], a_arrs[1]) +
-                      sum(a_costs)
-            if total_a < best_cost
-                best_cost = total_a; best_move = :A
-            end
-        end
-
-        # ── Move B: shift departures[1:i-1] earlier (independent) ──
-        b_deps_up = veh.departures[1:i-1] .- shift_earlier
-        b_arrs_up = veh.arrivals[1:i-1]
-        feas_b = b_arrs_up[1] >= 0.0
-        if feas_b
-            for j in 1:i-1
-                veh.arrivals[j] > b_deps_up[j] && (feas_b = false; break)
-            end
-        end
-        if feas_b
-            for j in 2:i-1
-                min_tof_j = get(MinTOFTable,
-                    (name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]]),
-                    (0.0, 0.0))[1]
-                b_arrs_up[j] - b_deps_up[j-1] < min_tof_j && (feas_b = false; break)
-            end
-        end
-        feas_b && veh.arrivals[i] - b_deps_up[end] < min_tof && (feas_b = false)
-        if feas_b
-            b_costs_up = i > 2 ? Float64[snap_cost(CostTable,
-                name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
-                b_deps_up[j-1], b_arrs_up[j]) for j in 2:i-1] : Float64[]
-            dv_b_target = snap_cost(CostTable, from_idx, to_idx, b_deps_up[end], veh.arrivals[i])
-            total_b = sum(b_costs_up) + dv_b_target
-            if total_b < best_cost
-                best_cost = total_b; best_move = :B
-            end
-        end
-
         # ── Move C: shift block arrivals+departures[i:end] later ──
         c_arrs = veh.arrivals[i:end] .+ shift_later
         c_deps = veh.departures[i:end] .+ shift_later
@@ -146,23 +91,7 @@ function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_
 
         best_move === :none && continue
 
-        if best_move === :A
-            veh.arrivals[i:end]   = a_arrs
-            veh.departures[i:end] = a_deps
-            veh.costs[i] = snap_cost(CostTable, from_idx, to_idx, veh.departures[i-1], a_arrs[1])
-            for j in i+1:length(veh.visitedSAT)
-                veh.costs[j] = snap_cost(CostTable,
-                    name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
-                    veh.departures[j-1], veh.arrivals[j])
-            end
-        elseif best_move === :B
-            veh.departures[1:i-1] = b_deps_up
-            b_costs_up2 = i > 2 ? Float64[snap_cost(CostTable,
-                name_to_idx[veh.visitedSAT[j-1]], name_to_idx[veh.visitedSAT[j]],
-                b_deps_up[j-1], b_arrs_up[j]) for j in 2:i-1] : Float64[]
-            dv_b2 = snap_cost(CostTable, from_idx, to_idx, b_deps_up[end], veh.arrivals[i])
-            veh.costs[2:i] = vcat(b_costs_up2, [dv_b2])
-        elseif best_move === :C
+        if best_move === :C
             veh.arrivals[i:end]   = c_arrs
             veh.departures[i:end] = c_deps
             veh.costs[i]          = best_cost
@@ -189,6 +118,7 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
     sat_ids    = demands["sat_identifiers"]
     svc_times  = demands["service_times"]
     deadlines  = demands["demand_deadlines"]
+    asset_vals = get(demands, "asset_values", nothing)
 
     length(schedule) <= 1 && return schedule, unassigned_in
 
@@ -470,20 +400,24 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
     if isempty(unassigned_uids)
         unassigned = unassigned_in
     elseif unassigned_in === nothing
-        unassigned = Dict{String, Any}(
-            "sat_identifiers" => [sat_ids[u] for u in unassigned_uids],
+        d = Dict{String, Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in unassigned_uids],
             "demand_deadlines" => [deadlines[u] for u in unassigned_uids],
             "service_times"    => [svc_times[u] for u in unassigned_uids],
             "UIDs"             => unassigned_uids,
         )
+        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in unassigned_uids])
+        unassigned = d
     else
         all_uids = vcat(unassigned_in["UIDs"], unassigned_uids)
-        unassigned = Dict{String, Any}(
-            "sat_identifiers" => [sat_ids[u] for u in all_uids],
+        d = Dict{String, Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in all_uids],
             "demand_deadlines" => [deadlines[u] for u in all_uids],
             "service_times"    => [svc_times[u] for u in all_uids],
             "UIDs"             => all_uids,
         )
+        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in all_uids])
+        unassigned = d
     end
 
     return schedule, unassigned
@@ -841,6 +775,7 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
     svc_times   = demands["service_times"]
     deadlines   = demands["demand_deadlines"]
     sat_ids     = demands["sat_identifiers"]
+    asset_vals  = get(demands, "asset_values", nothing)
 
     unrouted = Set{Int}(unassigned["UIDs"])
     sim_idx_for_uid = [name_to_idx[sat_ids[uid]] for uid in demands["UIDs"]]
@@ -922,13 +857,14 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
         return schedule, unassigned
     else
         remaining_uids = collect(unrouted)
-        unassigned = Dict{String, Any}(
-            "sat_identifiers" => [sat_ids[u] for u in remaining_uids],
+        d = Dict{String, Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in remaining_uids],
             "demand_deadlines" => [deadlines[u] for u in remaining_uids],
             "service_times"    => [svc_times[u] for u in remaining_uids],
             "UIDs"             => remaining_uids,
         )
-        return schedule, unassigned
+        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in remaining_uids])
+        return schedule, d
     end
 end
 
@@ -1173,24 +1109,29 @@ end
 # ── Helper: merge newly unassigned UIDs into the unassigned dict ──────────────
 function _merge_unassigned(unassigned_in, new_uids, demands)
     isempty(new_uids) && return unassigned_in
-    sat_ids   = demands["sat_identifiers"]
-    deadlines = demands["demand_deadlines"]
-    svc_times = demands["service_times"]
+    sat_ids    = demands["sat_identifiers"]
+    deadlines  = demands["demand_deadlines"]
+    svc_times  = demands["service_times"]
+    asset_vals = get(demands, "asset_values", nothing)
     if unassigned_in === nothing
-        return Dict{String,Any}(
-            "sat_identifiers" => [sat_ids[u] for u in new_uids],
+        d = Dict{String,Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in new_uids],
             "demand_deadlines" => [deadlines[u] for u in new_uids],
             "service_times"    => [svc_times[u] for u in new_uids],
             "UIDs"             => new_uids,
         )
+        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in new_uids])
+        return d
     else
         all_uids = vcat(unassigned_in["UIDs"], new_uids)
-        return Dict{String,Any}(
-            "sat_identifiers" => [sat_ids[u] for u in all_uids],
+        d = Dict{String,Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in all_uids],
             "demand_deadlines" => [deadlines[u] for u in all_uids],
             "service_times"    => [svc_times[u] for u in all_uids],
             "UIDs"             => all_uids,
         )
+        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in all_uids])
+        return d
     end
 end
 
@@ -1555,7 +1496,8 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
     sim_obj = load_sim()
 
     dv0 = isempty(init_sol) ? 0.0 : sum(sum(veh.costs) for veh in init_sol)
-    us0 = init_unassigned === nothing ? 0.0 : sum(init_unassigned["service_times"])
+    us0 = init_unassigned === nothing ? 0.0 :
+          sum(get(init_unassigned, "asset_values", init_unassigned["service_times"]))
     F = Archive([init_sol], [init_unassigned],
                 [dv0], [us0], [length(init_sol)],
                 _init_octree(dv0, us0, length(init_sol), 1))
@@ -1615,7 +1557,8 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
             op_times[k] += @elapsed begin
                 new_sol, new_u = fetch(t)
                 dv = isempty(new_sol) ? 0.0 : sum(sum(veh.costs) for veh in new_sol)
-                us = new_u === nothing ? 0.0 : sum(new_u["service_times"])
+                us = new_u === nothing ? 0.0 :
+                     sum(get(new_u, "asset_values", new_u["service_times"]))
                 push!(G.solutions, new_sol)
                 push!(G.unassigned_sets, new_u)
                 push!(G.total_deltaV, dv)

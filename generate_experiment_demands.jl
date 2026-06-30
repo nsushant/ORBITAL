@@ -10,43 +10,53 @@ const GATESTS_INCLUDE = true
 include("algoMDLS.jl")
 
 using JLD2
+using Random
 
-const N_DEMANDS = 200
-const N_TRIALS  = 10
-const OUT_DIR   = joinpath(@__DIR__, "outputs", "exp_demands")
+const N_DEMANDS   = 200
+const N_TRIALS    = 5
+const OUT_DIR     = joinpath(@__DIR__, "outputs", "exp_demands")
+
+const DEFAULT_ASSET_VALUE = 1_251_000.0   # V1 Starlink replacement value [USD]
+const V1_VALUE    = 1_251_000.0           # $/sat
+const V2_VALUE    = 3_250_000.0           # $/sat
+const V2_FRACTION = 0.30                  # ~30% of current Starlink fleet is V2-mini
 
 const INSTANCES = [
     (name   = "tight_normal",
-     params = Dict("num_demands"   => N_DEMANDS,
-                   "type"          => "random",
-                   "disttype"      => "normal",
-                   "deltaV_dist"   => 8000.0,
-                   "time_dist"     => [10.0, 100.0],
-                   "service_times" => [1.0, 3.0])),
+     params = Dict("num_demands"        => N_DEMANDS,
+                   "type"               => "random",
+                   "disttype"           => "normal",
+                   "deltaV_dist"        => 8000.0,
+                   "time_dist"          => [10.0, 100.0],
+                   "service_times"      => [1.0, 3.0],
+                   "default_asset_value" => DEFAULT_ASSET_VALUE)),
 
     (name   = "loose_uniform",
-     params = Dict("num_demands"   => N_DEMANDS,
-                   "type"          => "random",
-                   "disttype"      => "uniform",
-                   "deltaV_dist"   => 8000.0,
-                   "time_dist"     => [50.0, 365.0],
-                   "service_times" => [1.0, 5.0])),
+     params = Dict("num_demands"        => N_DEMANDS,
+                   "type"               => "random",
+                   "disttype"           => "uniform",
+                   "deltaV_dist"        => 8000.0,
+                   "time_dist"          => [50.0, 365.0],
+                   "service_times"      => [1.0, 5.0],
+                   "default_asset_value" => DEFAULT_ASSET_VALUE)),
 
     (name   = "tight_low_dv",
-     params = Dict("num_demands"   => N_DEMANDS,
-                   "type"          => "random",
-                   "disttype"      => "normal",
-                   "deltaV_dist"   => 5000.0,
-                   "time_dist"     => [10.0, 200.0],
-                   "service_times" => [1.0, 4.0])),
+     params = Dict("num_demands"        => N_DEMANDS,
+                   "type"               => "random",
+                   "disttype"           => "normal",
+                   "deltaV_dist"        => 5000.0,
+                   "time_dist"          => [10.0, 200.0],
+                   "service_times"      => [1.0, 4.0],
+                   "default_asset_value" => DEFAULT_ASSET_VALUE)),
 
     (name   = "loose_high_dv",
-     params = Dict("num_demands"   => N_DEMANDS,
-                   "type"          => "random",
-                   "disttype"      => "uniform",
-                   "deltaV_dist"   => 12000.0,
-                   "time_dist"     => [100.0, 365.0],
-                   "service_times" => [1.0, 5.0])),
+     params = Dict("num_demands"        => N_DEMANDS,
+                   "type"               => "random",
+                   "disttype"           => "uniform",
+                   "deltaV_dist"        => 12000.0,
+                   "time_dist"          => [100.0, 365.0],
+                   "service_times"      => [1.0, 5.0],
+                   "default_asset_value" => DEFAULT_ASSET_VALUE)),
 ]
 
 mkpath(OUT_DIR)
@@ -56,7 +66,16 @@ for inst in INSTANCES
     @info "─── Scenario: $(inst.name) ───"
     for trial in 1:N_TRIALS
         seed      = trial * 137 + Int(hash(inst.name) % 1000)
-        params    = merge(inst.params, Dict("seed" => seed))
+
+        # Randomly assign V1/V2 asset values to all simulation satellites for this trial
+        rng_sat       = MersenneTwister(seed)
+        sat_names_all = filter(n -> startswith(n, "sat"), sim.names)
+        sat_values_trial = Dict{String,Float64}(
+            n => (rand(rng_sat) < V2_FRACTION ? V2_VALUE : V1_VALUE)
+            for n in sat_names_all
+        )
+
+        params    = merge(inst.params, Dict("seed" => seed, "sat_values" => sat_values_trial))
         trial_str = lpad(trial, 2, '0')
 
         @info "  Generating demands" trial=trial seed=seed

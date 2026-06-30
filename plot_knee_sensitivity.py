@@ -23,10 +23,9 @@ OUT = "outputs"
 COLOURS = {
     "MDLS":     "#1f77b4",
     "NSGA-III": "#ff7f0e",
-    "MOEA/D":   "#2ca02c",
-    "PSO":      "#d62728",
+    "MOPSO-CD": "#d62728",
 }
-ALG_NAMES = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
+ALG_NAMES = ["MDLS", "NSGA-III", "MOPSO-CD"]
 
 FS       = 25
 FS_TICK  = 25

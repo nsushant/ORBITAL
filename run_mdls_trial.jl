@@ -20,8 +20,9 @@ include("algoMDLS.jl")
 
 using JLD2
 
-const MDLS_ITERS = 3334   # 3 ops/iter × 3334 ≈ 10 000 evals
-const N_VEHICLES = 20
+const MDLS_ITERS   = 3334   # 3 ops/iter × 3334 ≈ 10 000 evals
+const N_VEHICLES   = 20
+const REFUEL_TIME  = 0.5    # days — must match GA (run_ga_trial.py)
 
 EXP_DIR   = length(ARGS) >= 3 ? ARGS[3] : joinpath(@__DIR__, "outputs", "exp_demands")
 RES_DIR   = length(ARGS) >= 4 ? ARGS[4] : joinpath(@__DIR__, "outputs", "exp_results")
@@ -46,7 +47,7 @@ min_dv = build_min_dv_table(ct, n_sats)
 sim    = load_sim()
 
 @info "Building greedy warm start …"
-init_sol, init_unas = make_init_schedule(demands, sim; nvehicles=N_VEHICLES)
+init_sol, init_unas = make_init_schedule(demands, sim; nvehicles=N_VEHICLES, refuel_time=REFUEL_TIME, dv_budget=DV_BUDGET)
 
 @info "Running MDLS" scenario=scenario_name trial=trial_num iters=MDLS_ITERS
 t0 = time()
@@ -67,7 +68,7 @@ rows = [(archive.total_deltaV[i],
         if archive.total_deltaV[i] < INFEASIBLE_LEG_COST]
 
 open(outpath, "w") do io
-    println(io, "f1_dv,f2_unassigned_time,f3_vehicles")
+    println(io, "f1_dv,f2_unrecovered_value,f3_vehicles")
     for (dv, us, veh) in rows
         println(io, "$(round(dv; digits=4)),$(round(us; digits=6)),$veh")
     end

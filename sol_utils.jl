@@ -338,12 +338,19 @@ function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_
         push!(schedule, vehicle(visited_uids, visited_sats, arrivals, departures, costs))
     end
 
-    unassigned = isempty(unrouted) ? nothing : Dict{String, Any}(
-        "sat_identifiers" => [sat_ids[u] for u in unrouted],
-        "demand_deadlines" => [deadlines[u] for u in unrouted],
-        "service_times"    => [svc_times[u] for u in unrouted],
-        "UIDs"             => collect(unrouted),
-    )
+    if isempty(unrouted)
+        unassigned = nothing
+    else
+        uids_out   = collect(unrouted)
+        asset_vals = get(demands, "asset_values", nothing)
+        unassigned = Dict{String, Any}(
+            "sat_identifiers"  => [sat_ids[u] for u in uids_out],
+            "demand_deadlines" => [deadlines[u] for u in uids_out],
+            "service_times"    => [svc_times[u] for u in uids_out],
+            "UIDs"             => uids_out,
+        )
+        asset_vals !== nothing && (unassigned["asset_values"] = [asset_vals[u] for u in uids_out])
+    end
 
     return schedule, unassigned
 end

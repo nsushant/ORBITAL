@@ -4,7 +4,7 @@
 #
 # Run: julia --project=. -t auto numerical_experiments.jl
 
-using CSV, DataFrames, Printf, PyCall
+using CSV, DataFrames, Printf, PyCall, JSON3
 const moocore = pyimport("moocore")
 
 function compute_hypervolume(front::Matrix{Float64}, ref::Vector{Float64})
@@ -16,6 +16,14 @@ end
 const NUMEXP_INCLUDE = true
 const GATESTS_INCLUDE = true
 include("GATests.jl")   # loads all algorithm functions; skips single-run block due to NUMEXP_INCLUDE
+
+# Load satellite asset values (built by fetch_and_sample when run_starlink.jl ran)
+const SAT_VALUES_PATH = joinpath(@__DIR__, "outputs", "sat_values.json")
+const SAT_VALUES = isfile(SAT_VALUES_PATH) ?
+    JSON3.read(read(SAT_VALUES_PATH), Dict{String,Float64}) :
+    Dict{String,Float64}()
+isempty(SAT_VALUES) && @warn "sat_values.json not found — run starlink/run_starlink.jl first; defaulting to \$1.251M/sat"
+@info "Loaded satellite values" n_sats=length(SAT_VALUES)
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  INSTANCE DEFINITIONS
@@ -84,7 +92,8 @@ for inst in INSTANCES
         @info "  Trial $trial / $N_TRIALS"
 
         # New demand draw each trial; same scenario characteristics, fixed size
-        trial_params  = merge(inst.params, Dict("seed" => trial * 137 + hash(inst.name) % 1000))
+        trial_params  = merge(inst.params, Dict("seed"       => trial * 137 + hash(inst.name) % 1000,
+                                                "sat_values" => SAT_VALUES))
         trial_demands = generate_demands(_ga_sim, trial_params)
         ctx = make_context(trial_demands, _ga_sim, cost_table, mintof_table,
                            min_dv_tab; nvehicles=20)
@@ -95,9 +104,13 @@ for inst in INSTANCES
         trial_results = run_all_algorithms(ctx; budget_evals = BUDGET_EVALS,
                                            init_copies = init_copies)
 
+        total_val = sum(trial_demands["asset_values"])
         for alg in ALG_NAMES
             front, t = trial_results[alg]
-            push!(front_store[inst.name][alg], front)
+            # tag each row with total_demand_value so Python can compute value_recovered
+            n_rows     = size(front, 1)
+            tagged     = hcat(front, fill(total_val, n_rows))   # append as 4th col
+            push!(front_store[inst.name][alg], tagged)
             push!(time_results[inst.name][alg], t)
         end
 
@@ -118,8 +131,9 @@ for inst in INSTANCES
 end
 
 # ── Phase 2: compute one global fixed reference point from ALL fronts ──────────
+# Use only cols 1:3 (f1, f2_value, f3) for normalisation — col 4 is total_demand_value
 all_finite_pts = vcat([
-    let f = front_store[inst.name][alg][trial]
+    let f = front_store[inst.name][alg][trial][:, 1:3]
         f[vec(all(isfinite, f; dims=2)), :]
     end
     for inst  in INSTANCES
@@ -152,7 +166,8 @@ hv_results = Dict(inst.name => Dict(a => Float64[] for a in ALG_NAMES) for inst 
 for inst in INSTANCES
     for trial in 1:N_TRIALS
         for alg in ALG_NAMES
-            front     = front_store[inst.name][alg][trial]
+            front_4   = front_store[inst.name][alg][trial]
+            front     = front_4[:, 1:3]   # objectives only
             front_fin = front[vec(all(isfinite, front; dims=2)), :]
             front_fin = unique(front_fin, dims=1)
             hv = if size(front_fin, 1) == 0
@@ -168,28 +183,33 @@ end
 
 # ── Save normalised Pareto front points from every trial ─────────────────────
 front_rows = NamedTuple{(:instance, :algorithm, :trial,
-                         :f1_dv_norm, :f2_unassigned_norm, :f3_vehicles_norm,
-                         :f1_dv, :f2_unassigned_time, :f3_vehicles),
-                        NTuple{9, Any}}[]
+                         :f1_dv_norm, :f2_unrecovered_norm, :f3_vehicles_norm,
+                         :f1_dv, :f2_unrecovered_value, :f3_vehicles,
+                         :value_recovered, :total_demand_value),
+                        NTuple{11, Any}}[]
 for inst in INSTANCES
     for alg in ALG_NAMES
         for trial in 1:N_TRIALS
-            front = front_store[inst.name][alg][trial]
+            front_4   = front_store[inst.name][alg][trial]
+            front     = front_4[:, 1:3]
+            total_val = front_4[1, 4]   # same for all rows in this trial
             front_fin = front[vec(all(isfinite, front; dims=2)), :]
             front_fin = unique(front_fin, dims=1)
             size(front_fin, 1) == 0 && continue
             norm = normalise_front(front_fin)
             for i in 1:size(front_fin, 1)
                 push!(front_rows, (
-                    instance           = inst.name,
-                    algorithm          = alg,
-                    trial              = trial,
-                    f1_dv_norm         = norm[i, 1],
-                    f2_unassigned_norm = norm[i, 2],
-                    f3_vehicles_norm   = norm[i, 3],
-                    f1_dv              = front_fin[i, 1],
-                    f2_unassigned_time = front_fin[i, 2],
-                    f3_vehicles        = front_fin[i, 3],
+                    instance             = inst.name,
+                    algorithm            = alg,
+                    trial                = trial,
+                    f1_dv_norm           = norm[i, 1],
+                    f2_unrecovered_norm  = norm[i, 2],
+                    f3_vehicles_norm     = norm[i, 3],
+                    f1_dv                = front_fin[i, 1],
+                    f2_unrecovered_value = front_fin[i, 2],
+                    f3_vehicles          = front_fin[i, 3],
+                    value_recovered      = total_val - front_fin[i, 2],
+                    total_demand_value   = total_val,
                 ))
             end
         end

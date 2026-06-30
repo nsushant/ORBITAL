@@ -135,16 +135,19 @@ def encode_greedy_to_flat(tours, unserved, N, deadlines):
     """
     Convert a greedy schedule into the flat array used by OOSProblem.
 
-    Layout: x[0:4N] = [visit_order | vehicle_assignments | arrivals | depot_visits]
+    Layout: x[0:5N] = [visit_order | vehicle_assignments | arrivals | depot_visits | depot_arrivals]
 
-    Unserved demands get vehicle_assignment=0, arrival=0, depot_visit=0.
+    Unserved demands get vehicle_assignment=0, arrival=0, depot_visit=0, depot_arrival=0.
+    depot_arrivals[i] is the arrival time at the depot after serving demand i
+    (meaningful only when depot_visits[i]=1).
     """
-    x = np.zeros(4 * N)
+    x = np.zeros(5 * N)
 
-    visit_order_seg = x[0:N]
-    veh_assign_seg  = x[N:2*N]
-    arrival_seg     = x[2*N:3*N]
-    depot_vis_seg   = x[3*N:4*N]
+    visit_order_seg  = x[0:N]
+    veh_assign_seg   = x[N:2*N]
+    arrival_seg      = x[2*N:3*N]
+    depot_vis_seg    = x[3*N:4*N]
+    depot_arr_seg    = x[4*N:5*N]
 
     for v_idx, tour in enumerate(tours):
         v = v_idx + 1
@@ -160,7 +163,7 @@ def encode_greedy_to_flat(tours, unserved, N, deadlines):
             visit_order_seg[pos] = k / K
             arrival_seg[pos]     = step['arrival']
 
-        # Mark depot visits: a demand has depot_visit=1 if the next tour step is a depot
+        # Mark depot visits and capture depot arrival times
         for step_idx, step in enumerate(tour):
             if step['type'] != 'demand':
                 continue
@@ -168,10 +171,12 @@ def encode_greedy_to_flat(tours, unserved, N, deadlines):
             next_steps = tour[step_idx + 1:]
             if next_steps and next_steps[0]['type'] == 'depot':
                 depot_vis_seg[pos] = 1
+                depot_arr_seg[pos] = next_steps[0]['arrival']
 
         # Circular-wrap: last demand always has depot_visit=1 (forced in repair anyway)
         last_demand = demand_steps[-1]
         depot_vis_seg[last_demand['pos']] = 1
+        # depot_arr_seg for last demand left as 0 (no subsequent demand to gate)
 
     return x
 
@@ -193,11 +198,12 @@ def load_greedy_from_json(path, N):
     with open(path) as f:
         data = json.load(f)
 
-    x = np.zeros(4 * N)
-    visit_order_seg = x[0:N]
-    veh_assign_seg  = x[N:2*N]
-    arrival_seg     = x[2*N:3*N]
-    depot_vis_seg   = x[3*N:4*N]
+    x = np.zeros(5 * N)
+    visit_order_seg  = x[0:N]
+    veh_assign_seg   = x[N:2*N]
+    arrival_seg      = x[2*N:3*N]
+    depot_vis_seg    = x[3*N:4*N]
+    depot_arr_seg    = x[4*N:5*N]
 
     for v_idx, veh in enumerate(data["schedule"]):
         v        = v_idx + 1
@@ -218,13 +224,17 @@ def load_greedy_from_json(path, N):
             arrival_seg[pos]     = arr
 
             # depot_visit = 1 if the next tour entry after this demand is a
-            # depot marker (uid < 0), or if this is the last demand in the tour
+            # depot marker (uid < 0), or if this is the last demand in the tour.
+            # Also capture the depot arrival time from the JSON.
             if k == K - 1:
                 depot_vis_seg[pos] = 1
+                # last demand: depot_arr left as 0 (no subsequent demand)
             else:
                 next_tour_i = demand_positions[k + 1][0]
-                if any(uids[j] < 0 for j in range(tour_i + 1, next_tour_i)):
+                depot_indices = [j for j in range(tour_i + 1, next_tour_i) if uids[j] < 0]
+                if depot_indices:
                     depot_vis_seg[pos] = 1
+                    depot_arr_seg[pos] = arrivals[depot_indices[0]]
 
     unassigned = data.get("unassigned")
     if unassigned and unassigned.get("UIDs"):
@@ -250,7 +260,7 @@ class GreedySampling(Sampling):
 
     def __init__(self, greedy_x):
         super().__init__()
-        self.greedy_x = greedy_x   # shape (4*N,)
+        self.greedy_x = greedy_x   # shape (5*N,)
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.random.uniform(

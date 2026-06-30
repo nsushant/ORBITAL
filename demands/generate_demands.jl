@@ -171,10 +171,17 @@ function generate_demands(simulation, demand_params::Dict) :: Dict{String, Any}
         service_times_out[k]  = service_time
     end
 
+    # Asset values: look up per-satellite value if provided, else default to V1 value
+    sat_values_param = get(demand_params, "sat_values", Dict{String,Float64}())
+    default_asset_val = get(demand_params, "default_asset_value", 1_251_000.0)
+    asset_values_out = [get(sat_values_param, sat_identifiers[k], default_asset_val)
+                        for k in 1:num_demands]
+
     demands = Dict{String, Any}(
         "sat_identifiers" => sat_identifiers,
         "demand_deadlines" => demand_deadlines,
         "service_times"    => service_times_out,
+        "asset_values"     => asset_values_out,
         "UIDs"             => collect(1:num_demands)
     )
 

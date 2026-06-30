@@ -20,22 +20,26 @@ import moocore
 # Config
 # ---------------------------------------------------------------------------
 
-ALG_NAMES  = ["mdls", "nsga3", "moead", "pso"]
-ALG_LABELS = {"mdls": "MDLS", "nsga3": "NSGA-III", "moead": "MOEA/D", "pso": "PSO"}
-N_TRIALS   = 10
+ALG_NAMES  = ["mdls", "nsga3", "pso"]
+ALG_LABELS = {"mdls": "MDLS", "nsga3": "NSGA-III", "pso": "MOPSO-CD"}
+N_TRIALS   = 5
 RES_DIR    = "outputs/sensitivity_results"
 OUT_DIR    = "outputs"
 PENALTY    = 1e6
-OBJ_COLS   = ["f1_dv", "f2_unassigned_time", "f3_vehicles"]
+OBJ_COLS   = ["f1_dv", "f2_unrecovered_value", "f3_vehicles"]
 
 # Problem-motivated fixed worst-case bounds (independent of which algorithms ran).
-N_DEMANDS    = 200
-SERVICE_TIME = 3.0
-DV_BUDGET    = 5000.0
-N_VEHICLES   = 20
-FIXED_NADIR  = np.array([N_DEMANDS * DV_BUDGET,    # f1: 1 000 000 m/s
-                          N_DEMANDS * SERVICE_TIME,  # f2: 600 days
-                          N_VEHICLES + 5])           # f3: 25 vehicles
+# f2: expected do-nothing loss (mixed V1/V2 fleet) + 10% safety margin
+N_DEMANDS         = 200
+V1_ASSET_VAL      = 1_251_000.0
+V2_ASSET_VAL      = 3_250_000.0
+V2_FRACTION       = 0.30
+DV_BUDGET         = 5000.0
+N_VEHICLES        = 20
+EXPECTED_AVG_ASSET_VAL = V2_FRACTION * V2_ASSET_VAL + (1 - V2_FRACTION) * V1_ASSET_VAL
+FIXED_NADIR  = np.array([N_DEMANDS * DV_BUDGET,                          # f1: 1 000 000 m/s
+                          N_DEMANDS * EXPECTED_AVG_ASSET_VAL * 1.10,     # f2: ~407 M USD
+                          N_VEHICLES + 5])                               # f3: 25 vehicles
 
 # Sub-experiment definitions: (se_name, factor_col, levels, dv_budget_per_level)
 # dv_budget_per_level only relevant for SE4 (for labelling); None means N/A
@@ -73,6 +77,8 @@ def load_front(se_name, level_label, alg, trial):
     df = pd.read_csv(path)
     if df.empty:
         return None
+    if "f2_unassigned_time" in df.columns:
+        df = df.rename(columns={"f2_unassigned_time": "f2_unrecovered_value"})
     df = df[df["f1_dv"] < PENALTY]
     return df if not df.empty else None
 
@@ -161,7 +167,7 @@ for se in SUBEXPS:
                         "f2_unassigned_norm": pts_norm[i, 1],
                         "f3_vehicles_norm":   pts_norm[i, 2],
                         "f1_dv":              pts_raw[i, 0],
-                        "f2_unassigned_time": pts_raw[i, 1],
+                        "f2_unrecovered_value": pts_raw[i, 1],
                         "f3_vehicles":        pts_raw[i, 2],
                     })
 

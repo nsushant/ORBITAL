@@ -28,19 +28,21 @@ const MAX_VEHICLES = 30
 # ═════════════════════════════════════════════════════════════════════════════
 
 struct SchedIndividual
-    schedule   :: Vector{vehicle}
-    unassigned :: Union{Nothing, Dict{String,Any}}
-    f1 :: Float64   # total ΔV [m/s]
-    f2 :: Float64   # total unassigned service time [days]
-    f3 :: Float64   # vehicles used
+    schedule     :: Vector{vehicle}
+    unassigned   :: Union{Nothing, Dict{String,Any}}
+    f1           :: Float64   # total ΔV [m/s]
+    f2           :: Float64   # total unrecovered asset value [$]
+    f3           :: Float64   # vehicles used
+    n_unassigned :: Int       # number of unserviced demands
 end
 
 function sched_eval(sched::Vector{vehicle},
                     unas::Union{Nothing,Dict{String,Any}}) :: SchedIndividual
-    f1 = isempty(sched) ? 0.0 : sum(sum(v.costs) for v in sched)
-    f2 = unas === nothing ? 0.0 : sum(unas["service_times"])
-    f3 = Float64(length(sched))
-    return SchedIndividual(sched, unas, f1, f2, f3)
+    f1           = isempty(sched) ? 0.0 : sum(sum(v.costs) for v in sched)
+    f2           = unas === nothing ? 0.0 : sum(unas["asset_values"])
+    f3           = Float64(length(sched))
+    n_unassigned = unas === nothing ? 0 : length(unas["UIDs"])
+    return SchedIndividual(sched, unas, f1, f2, f3, n_unassigned)
 end
 
 # Extract non-dominated front from a flat list of evaluated (f1,f2,f3) tuples.
@@ -479,10 +481,13 @@ function decode_tour(ti::TourIndividual, ctx::RunContext;
         nothing
     else
         ups = [ctx.uid_to_pos[uid] for uid in unassigned_uids]
-        Dict{String,Any}("UIDs"             => unassigned_uids,
-                         "sat_identifiers"  => ctx.sat_ids[ups],
-                         "service_times"    => ctx.svc_times[ups],
-                         "demand_deadlines" => ctx.deadlines[ups])
+        _av = get(ctx.demands, "asset_values", nothing)
+        _d  = Dict{String,Any}("UIDs"             => unassigned_uids,
+                               "sat_identifiers"  => ctx.sat_ids[ups],
+                               "service_times"    => ctx.svc_times[ups],
+                               "demand_deadlines" => ctx.deadlines[ups])
+        _av !== nothing && (_d["asset_values"] = _av[ups])
+        _d
     end
     return sched_eval(schedule, unas)
 end

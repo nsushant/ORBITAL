@@ -21,10 +21,9 @@ OUT = "outputs"
 COLOURS = {
     "MDLS":     "#1f77b4",
     "NSGA-III": "#ff7f0e",
-    "MOEA/D":   "#2ca02c",
-    "PSO":      "#d62728",
+    "MOPSO-CD": "#d62728",
 }
-ALG_NAMES = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
+ALG_NAMES = ["MDLS", "NSGA-III", "MOPSO-CD"]
 
 FS       = 29
 FS_TICK  = 29
@@ -241,7 +240,7 @@ for se in SUBEXPS:
     if n_lv == 1:
         axes = [axes]
     fig.subplots_adjust(wspace=0.05)
-    fig.suptitle(f"ΔV vs Unassigned Time — {se['factor_label']}",
+    fig.suptitle(f"ΔV vs Unrecovered Value — {se['factor_label']}",
                  fontsize=FS_TITLE + 2, y=1.02)
 
     for i, (ax, lv, lv_lbl) in enumerate(zip(axes, levels, lv_labels)):
@@ -249,11 +248,11 @@ for se in SUBEXPS:
         for alg in ALG_NAMES:
             alg_df = sub[sub["algorithm"] == alg]
             plot_kde(ax,
-                     alg_df["f2_unassigned_time"].values,
+                     alg_df["f2_unrecovered_value"].values,
                      alg_df["_dv_norm"].values,
                      COLOURS[alg])
         ax.set_title(lv_lbl, fontsize=FS_TITLE)
-        ax.set_xlabel("Time unserviced [days]", fontsize=FS)
+        ax.set_xlabel("Unrecovered value [USD]", fontsize=FS)
         if i == 0:
             ax.set_ylabel("ΔV (normalised)", fontsize=FS)
         ax.grid(True, linewidth=0.4, alpha=0.4)
