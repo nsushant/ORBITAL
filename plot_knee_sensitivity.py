@@ -173,7 +173,7 @@ for col, se in enumerate(SUBEXPS):
     ylo, yhi = ax.get_ylim()
     pad = (yhi - ylo) * 0.08
     ax.set_ylim(ylo - pad, yhi + pad)
-    ax.grid(True, axis="y", linewidth=0.4, alpha=0.5)
+    ax.grid(False)
     ax.tick_params(labelsize=FS_TICK)
 
 fig_knee.legend(

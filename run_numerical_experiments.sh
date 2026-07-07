@@ -12,6 +12,7 @@
 set -euo pipefail
 
 N_TRIALS=${N_TRIALS:-5}
+REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 SCENARIOS="tight_normal loose_uniform tight_low_dv loose_high_dv"
 JULIA="julia --project=. -t auto"
 PYTHON="python"
@@ -27,7 +28,11 @@ echo "╔═══════════════════════�
 echo "║  Phase 1: Generating demand files                       ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
-$JULIA generate_experiment_demands.jl
+if [ "$REGEN_DEMANDS" = "true" ]; then
+    $JULIA generate_experiment_demands.jl
+else
+    echo "Skipped (set REGEN_DEMANDS=true to regenerate)."
+fi
 
 echo ""
 echo "Phase 1 complete."

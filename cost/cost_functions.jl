@@ -12,18 +12,18 @@ end
 
 # ── LT cost: Lu analytical model + phasing ΔV ─────────────────────────────────
 """
-    LT_cost_calculation(sim, satinit, satarr, dep_days, arr_days) → Float64 [m/s]
+    LT_cost_calculation(sim, satinit, satarr, dep_days, arr_days) → (dv_m_s, Tp_days)
 
 Low-thrust transfer cost from node `satinit` to node `satarr`.
-Reads orbital elements (a, i, raan, nu) from HDF5 at the nearest hourly snapshot.
-Includes in-plane phasing ΔV after the transfer.
-Returns 9999.0 on failure.
+Returns (ΔV in m/s, phasing duration in days). Phasing duration must be added
+to the arrival epoch to get the true rendezvous time.
+Returns (1e8, 0.0) on failure.
 """
 function LT_cost_calculation(sim, satinit::Int, satarr::Int,
-                              dep_days::Float64, arr_days::Float64) :: Float64
+                              dep_days::Float64, arr_days::Float64) :: Tuple{Float64,Float64}
 
     tof_days = arr_days - dep_days
-    tof_days <= 0.0 && return 1e8
+    tof_days <= 0.0 && return 1e8, 0.0
 
     k_dep = nearest_idx(sim.times, dep_days * 86400.0)
     k_arr = nearest_idx(sim.times, arr_days * 86400.0)
@@ -41,34 +41,29 @@ function LT_cost_calculation(sim, satinit::Int, satarr::Int,
         a_j, inc_j, raan_j, nu_j = oe_j
     end
 
+    n_i         = sqrt(MU_LT / a_i^3)
+    nu_i_at_arr = mod(nu_i + n_i * tof_days * 86400.0, 2π)
+
     # ── Same-plane shortcut: skip full LT solve, only phasing ΔV needed ───────
     same_plane = abs(inc_i - inc_j)  < 0.01 &&   # ~0.57°
                  abs(raan_i - raan_j) < 0.01
 
     if same_plane
-        n_i         = sqrt(MU_LT / a_i^3)
-        nu_i_at_arr = mod(nu_i + n_i * tof_days * 86400.0, 2π)
-        dv_phase    = phasing(a_j, nu_i_at_arr, nu_j, 1) * 1000.0
-        return isfinite(dv_phase) ? dv_phase : 1e8
+        dv_phase, Tp_s = phasing(a_j, nu_i_at_arr, nu_j)
+        return dv_phase * 1000.0, Tp_s / 86400.0
     end
 
     # ── Full LT transfer ΔV ───────────────────────────────────────────────────
     result = try
         calculate_transfer_cost(a_i, inc_i, raan_i, a_j, inc_j, raan_j, tof_days)
     catch
-        return 1e8
+        return 1e8, 0.0
     end
 
     dv_transfer = result["deltaV_total"]
+    dv_phase, Tp_s = phasing(a_j, nu_i_at_arr, nu_j)
 
-    # Phasing ΔV: propagate servicer's nu to arrival, compare with target's nu at arrival
-    n_i         = sqrt(MU_LT / a_i^3)
-    nu_i_at_arr = mod(nu_i + n_i * tof_days * 86400.0, 2π)
-    dv_phase    = phasing(a_j, nu_i_at_arr, nu_j, 1) * 1000.0  # km/s → m/s
-
-    isinf(dv_phase) && return 1e8
-
-    return dv_transfer + dv_phase
+    return dv_transfer + dv_phase * 1000.0, Tp_s / 86400.0
 end
 
 # ── HT cost: Izzo Lambert on RK4+J2 propagated positions ──────────────────────

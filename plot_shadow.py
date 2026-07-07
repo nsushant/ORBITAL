@@ -101,7 +101,7 @@ for i, (ax, inst) in enumerate(zip(axes1, instances)):
     ax.set_xlabel("Time Unserviced [days]", fontsize=FS)
     if i == 0:
         ax.set_ylabel("ΔV (normalised)", fontsize=FS)
-    ax.grid(True, linewidth=0.4, alpha=0.4)
+    ax.grid(False)
     ax.tick_params(labelsize=FS_TICK)
     inst_dv = sub["f1_dv_norm"]
     pad = (inst_dv.max() - inst_dv.min()) * 0.05
@@ -131,7 +131,7 @@ for i, (ax, inst) in enumerate(zip(axes2, instances)):
     ax.set_xlabel("Vehicles used", fontsize=FS)
     if i == 0:
         ax.set_ylabel("ΔV (normalised)", fontsize=FS)
-    ax.grid(True, linewidth=0.4, alpha=0.4)
+    ax.grid(False)
     ax.tick_params(labelsize=FS_TICK)
     inst_dv = sub["f1_dv_norm"]
     pad = (inst_dv.max() - inst_dv.min()) * 0.05

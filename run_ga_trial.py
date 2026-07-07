@@ -43,7 +43,7 @@ trial_str = f"{trial:02d}"
 # Imports
 # ---------------------------------------------------------------------------
 
-from loaders import load_sim_name_map, load_demands, load_cost_table, load_min_tof_table
+from loaders import load_sim_name_map, load_demands, load_cost_table_jld2, load_min_tof_table
 from pymoo_stuff import OOSProblem, OOSRepair, OOSCrossover, OOSMutation, MOPSO_CD_Repair
 from greedy_init import load_greedy_from_json, GreedySampling
 
@@ -73,11 +73,11 @@ print(f"  scenario={scenario}  trial={trial}")
 print(f"{'='*60}")
 
 SIM_FILE     = "outputs/simulation.h5"
-COST_FILE    = "outputs/cost_table_adaptive.h5"
+COST_FILE    = "outputs/cost_table.jld2"
 REFUEL_TIME  = 0.5   # days — must match MDLS (run_mdls_trial.jl)
 
 d             = load_demands(dem_path)
-ct, ct_meta   = load_cost_table(COST_FILE)
+ct, ct_meta   = load_cost_table_jld2(COST_FILE)
 nm            = load_sim_name_map(SIM_FILE, depot_idx=ct_meta["depot_idx"])
 min_tof_table = load_min_tof_table()
 

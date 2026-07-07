@@ -24,9 +24,9 @@ SCENARIO_LABELS = {
     "loose_high_dv":  "Scenario 4",
 }
 
-FS      = 22
-FS_TICK = 22
-FS_TITLE = 24
+FS       = 26
+FS_TICK  = 24
+FS_TITLE = 28
 
 
 OBJECTIVES = [
@@ -58,7 +58,7 @@ for inst in instances:
         ax.set_xlabel(label, fontsize=10)
         ax.set_ylabel("Number of solutions", fontsize=10)
         ax.legend(fontsize=8)
-        ax.grid(True, linewidth=0.4, alpha=0.5)
+        ax.grid(False)
         ax.tick_params(labelsize=8)
 
     plt.tight_layout()
@@ -119,9 +119,9 @@ if os.path.exists(src):
         ax.set_xticks(range(1, len(alg_names) + 1))
         ax.set_xticklabels(alg_names, fontsize=FS_TICK, rotation=15)
         if c == 0: 
-            ax.set_ylabel("L2 distance to ideal (normalised)", fontsize=FS)
+            ax.set_ylabel("Normalised Knee Point", fontsize=FS)
         
-        ax.grid(True, axis="y", linewidth=0.4, alpha=0.5)
+        ax.grid(False)
         ax.tick_params(labelsize=FS_TICK)
         c+=1 
         
@@ -165,7 +165,7 @@ if os.path.exists(hv_path):
             ax.set_ylabel("Hypervolume (normalised)", fontsize=FS)
 
         ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0))
-        ax.grid(True, axis="y", linewidth=0.4, alpha=0.5)
+        ax.grid(False)
         ax.tick_params(labelsize=FS_TICK)
         c2 +=1 
 

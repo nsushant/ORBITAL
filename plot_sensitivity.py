@@ -204,7 +204,7 @@ for col, se in enumerate(SUBEXPS):
     ylo, yhi = ax.get_ylim()
     pad = (yhi - ylo) * 0.08
     ax.set_ylim(ylo - pad, yhi + pad)
-    ax.grid(True, axis="y", linewidth=0.4, alpha=0.5)
+    ax.grid(False)
     ax.tick_params(labelsize=FS_TICK)
 
 fig_hv.legend(
@@ -255,7 +255,7 @@ for se in SUBEXPS:
         ax.set_xlabel("Unrecovered value [USD]", fontsize=FS)
         if i == 0:
             ax.set_ylabel("ΔV (normalised)", fontsize=FS)
-        ax.grid(True, linewidth=0.4, alpha=0.4)
+        ax.grid(False)
         ax.tick_params(labelsize=FS_TICK)
         inst_dv = sub["_dv_norm"]
         if len(inst_dv) > 0:

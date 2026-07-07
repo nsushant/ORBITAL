@@ -12,11 +12,11 @@ F9 launch    : 22,000 kg capacity, $74 M  → market rate = $74M/22000 = $3,363.
 Internal rate: market rate / 2 = $1,681.82/kg  (SpaceX internal Starlink launch)
 Vehicle cost : $50 M per servicer (fixed)
 Dry mass     : 300 kg
-V1 satellite : $700 K manufacturing + 260 kg × internal rate = $1.137 M
-V2 satellite : $1.77 M manufacturing + 800 kg × internal rate = $3.116 M
+V1.5 satellite : $700 K manufacturing + 303 kg × internal rate = $1.210 M
+V2 Mini satellite : $1.77 M manufacturing + 800 kg × internal rate = $3.116 M
 V2 fraction  : 30% of fleet
-Average asset value: 0.70 × 1.137 M + 0.30 × 3.116 M = $1.731 M
-Total asset value (200 demands): $346.2 M  (approximate; actual varies per trial)
+Average asset value: 0.70 × 1.210 M + 0.30 × 3.116 M = $1.782 M
+Total asset value (200 demands): $356.4 M  (approximate; actual varies per trial)
 
 BCR formula
 -----------
@@ -39,6 +39,7 @@ import os
 import math
 import numpy as np
 import pandas as pd
+import h5py
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -56,28 +57,56 @@ INTERNAL_RATE = MARKET_RATE / 2.0       # $/kg = 1681.82
 C_VEHICLE     = 50_000_000.0            # $ per servicer
 M_DRY         = 300.0                   # kg
 
-V1_MFG        = 700_000.0               # $
-V1_MASS       = 260.0                   # kg
-V2_MFG        = 1_770_000.0             # $
-V2_MASS       = 800.0                   # kg
+V1_MASS       = 303.0   # kg (V1.5 DAS-filed mass)
+V2_MASS       = 800.0   # kg (V2 Mini DAS-filed mass)
 V2_FRACTION   = 0.30
 
-V1_VALUE      = V1_MFG + INTERNAL_RATE * V1_MASS   # ~$1.137 M
-V2_VALUE      = V2_MFG + INTERNAL_RATE * V2_MASS   # ~$3.116 M
-AVG_V_SAT     = (1 - V2_FRACTION) * V1_VALUE + V2_FRACTION * V2_VALUE
+# ($1K/kg mfg + $1,850/kg launch) × mass
+V1_VALUE      = (1_000.0 + 1_850.0) * V1_MASS   # $864,150 base, pre-depreciation
+V2_VALUE      = (1_000.0 + 1_850.0) * V2_MASS   # $2,280,000 base, pre-depreciation
+
+# Apply Weibull depreciation at avg fleet age of 2.0 years (k=1.5, λ=5 yr)
+import math as _math
+_LAMBDA, _K, _AVG_AGE = 5.0, 1.5, 2.0
+_DEPREC       = _math.exp(-(_AVG_AGE / _LAMBDA) ** _K)   # ~0.857
+V1_VALUE_DEP  = V1_VALUE * _DEPREC     # ~$740K
+V2_VALUE_DEP  = V2_VALUE * _DEPREC     # ~$1.95M
+AVG_V_SAT     = (1 - V2_FRACTION) * V1_VALUE_DEP + V2_FRACTION * V2_VALUE_DEP
 N_DEMANDS     = 200
 TOTAL_ASSET_V = N_DEMANDS * AVG_V_SAT
 
 PENALTY       = 1e6
 
-DV_BUDGETS    = [1500, 3000, 5000, 8000]   # m/s — SE4 levels
+DV_BUDGETS    = [1500, 3000, 5000, 8000]   # m/s — SE4 levels (10000 has no demand file)
 ALG_KEYS      = ["mdls", "nsga3", "pso"]
 ALG_LABELS    = {"mdls": "MDLS", "nsga3": "NSGA-III", "pso": "MOPSO-CD"}
 COLOURS       = {"mdls": "#1f77b4", "nsga3": "#ff7f0e", "pso": "#d62728"}
 N_TRIALS      = 5
 
 RES_DIR = os.path.join("outputs", "sensitivity_results")
+DEM_DIR = os.path.join("outputs", "sensitivity_demands")
 OUT_DIR = "outputs"
+
+# ── Demand loader (asset values per trial) ────────────────────────────────────
+
+def load_asset_values(dv_budget, trial):
+    """Return (total_asset_v, avg_asset_v, n_demands) from the JLD2 demand file."""
+    path = os.path.join(DEM_DIR, f"bcr_dvbudget_{dv_budget}_{trial:02d}.jld2")
+    if not os.path.exists(path):
+        return TOTAL_ASSET_V, AVG_V_SAT, N_DEMANDS   # fallback to constants
+    try:
+        with h5py.File(path, "r") as f:
+            top_ref = f["demands"][()][0]
+            kvvec   = f[top_ref][()]
+            for ref in kvvec:
+                pair = f[ref][()]
+                key  = pair[0].decode()
+                if key == "asset_values":
+                    vals = f[pair[1]][()].astype(float)
+                    return float(vals.sum()), float(vals.mean()), int(len(vals))
+    except Exception:
+        pass
+    return TOTAL_ASSET_V, AVG_V_SAT, N_DEMANDS
 
 # ── Solution selectors ────────────────────────────────────────────────────────
 
@@ -122,12 +151,16 @@ def collect_records(selector):
                 if df.empty:
                     continue
 
+                total_v, avg_v, n_dem = load_asset_values(dv_budget, trial)
+
                 kp = selector(df)
                 f1 = float(kp["f1_dv"])
                 f2 = float(kp["f2_unrecovered_value"])
                 f3 = max(float(kp["f3_vehicles"]), 1.0)
 
-                recovered_value = max(0.0, TOTAL_ASSET_V - f2)
+                recovered_value = max(0.0, total_v - f2)
+                n_lost          = min(n_dem, round(f2 / avg_v)) if avg_v > 0 else 0
+                n_served        = n_dem - n_lost
                 benefits        = recovered_value
 
                 n_sorties_total = f1 / dv_budget if dv_budget > 0 else 0.0
@@ -138,13 +171,20 @@ def collect_records(selector):
 
                 bcr = benefits / costs if costs > 0 else np.nan
 
+                # Max affordable manufacturing cost per vehicle for BCR = 1
+                affordable_mfg = (benefits - c_launch - c_propellant) / f3
+
                 records.append({
-                    "algorithm":       alg,
-                    "dv_budget":       dv_budget,
-                    "m_prop":          m_prop,
-                    "trial":           trial,
-                    "bcr":             bcr,
-                    "recovered_value": recovered_value,
+                    "algorithm":        alg,
+                    "dv_budget":        dv_budget,
+                    "m_prop":           m_prop,
+                    "trial":            trial,
+                    "bcr":              bcr,
+                    "recovered_value":  recovered_value,
+                    "n_served":         n_served,
+                    "n_lost":           n_lost,
+                    "total_asset_v_M":  total_v / 1e6,
+                    "affordable_mfg_M": affordable_mfg / 1e6,
                 })
     return pd.DataFrame(records)
 
@@ -180,7 +220,7 @@ def plot_panels(data, out_path, title_suffix):
     col = COLOURS["mdls"]
     sub = data[data["algorithm"] == "mdls"]
 
-    fig, (ax_bcr, ax_rec) = plt.subplots(2, 1, figsize=(6, 9))
+    fig, (ax_bcr, ax_rec, ax_sat) = plt.subplots(3, 1, figsize=(6, 13))
 
     # BCR panel
     x, med, lo, hi = collect_stats(sub.dropna(subset=["bcr"]), "bcr")
@@ -191,7 +231,7 @@ def plot_panels(data, out_path, title_suffix):
     ax_bcr.set_xlabel("Propellant Capacity [kg]", fontsize=FS)
     ax_bcr.set_ylabel("BCR", fontsize=FS)
     ax_bcr.tick_params(labelsize=FS_TICK)
-    ax_bcr.grid(True, linewidth=0.4, alpha=0.5)
+    ax_bcr.grid(False)
     ax_bcr.set_ylim(bottom=0)
     ax_bcr.legend(fontsize=FS_TICK)
 
@@ -203,8 +243,23 @@ def plot_panels(data, out_path, title_suffix):
     ax_rec.set_xlabel("Propellant Capacity [kg]", fontsize=FS)
     ax_rec.set_ylabel("Recovered Asset Value [$M]", fontsize=FS)
     ax_rec.tick_params(labelsize=FS_TICK)
-    ax_rec.grid(True, linewidth=0.4, alpha=0.5)
+    ax_rec.grid(False)
     ax_rec.set_ylim(bottom=0)
+
+    # Satellite counts panel
+    x_s, med_s, lo_s, hi_s = collect_stats(sub.dropna(subset=["n_served"]), "n_served")
+    x_l, med_l, lo_l, hi_l = collect_stats(sub.dropna(subset=["n_lost"]),   "n_lost")
+    ax_sat.fill_between(x_s, lo_s, hi_s, color="#2ca02c", alpha=0.20)
+    ax_sat.plot(x_s, med_s, color="#2ca02c", lw=2, marker="o", ms=5, label="Serviced")
+    ax_sat.fill_between(x_l, lo_l, hi_l, color="#d62728", alpha=0.20)
+    ax_sat.plot(x_l, med_l, color="#d62728", lw=2, marker="s", ms=5, label="Lost")
+    ax_sat.set_title(f"Propellant Budget vs Satellites ({title_suffix})", fontsize=FS_TITLE)
+    ax_sat.set_xlabel("Propellant Capacity [kg]", fontsize=FS)
+    ax_sat.set_ylabel("Number of Satellites", fontsize=FS)
+    ax_sat.tick_params(labelsize=FS_TICK)
+    ax_sat.grid(False)
+    ax_sat.set_ylim(bottom=0)
+    ax_sat.legend(fontsize=FS_TICK)
 
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
@@ -216,7 +271,28 @@ def plot_panels(data, out_path, title_suffix):
 plot_panels(data_knee,   os.path.join(OUT_DIR, "bcr_vs_propellant_knee.pdf"),        "Knee Point")
 plot_panels(data_maxcov, os.path.join(OUT_DIR, "bcr_vs_propellant_maxcoverage.pdf"), "Max Coverage")
 
+# ── Manufacturing budget plot (knee point, MDLS only) ─────────────────────────
+
+col = COLOURS["mdls"]
+sub = data_knee[data_knee["algorithm"] == "mdls"]
+
+fig, ax = plt.subplots(figsize=(6, 4))
+x, med, lo, hi = collect_stats(sub.dropna(subset=["affordable_mfg_M"]), "affordable_mfg_M")
+ax.fill_between(x, lo, hi, color=col, alpha=0.20)
+ax.plot(x, med, color=col, lw=2, marker="o", ms=5)
+ax.set_xlabel("Propellant Capacity [kg]", fontsize=FS)
+ax.set_ylabel("Manufacturing Cost [\\$M]", fontsize=FS)
+ax.set_title("Propellant Budget vs Manufacturing Cost at BCR = 1", fontsize=FS_TITLE)
+ax.tick_params(labelsize=FS_TICK)
+ax.grid(False)
+fig.tight_layout()
+out_mfg = os.path.join(OUT_DIR, "manufacturing_budget_vs_propellant.pdf")
+fig.savefig(out_mfg, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved {out_mfg}")
+
 print(f"\nConstants used:")
-print(f"  V1 value = ${V1_VALUE/1e6:.3f}M,  V2 value = ${V2_VALUE/1e6:.3f}M")
-print(f"  avg_V_sat = ${AVG_V_SAT/1e6:.3f}M,  TOTAL_ASSET_V = ${TOTAL_ASSET_V/1e6:.1f}M")
+print(f"  V1 base = ${V1_VALUE/1e6:.3f}M → depreciated = ${V1_VALUE_DEP/1e6:.3f}M")
+print(f"  V2 base = ${V2_VALUE/1e6:.3f}M → depreciated = ${V2_VALUE_DEP/1e6:.3f}M")
+print(f"  avg_V_sat (depreciated) = ${AVG_V_SAT/1e6:.3f}M,  TOTAL_ASSET_V = ${TOTAL_ASSET_V/1e6:.1f}M")
 print(f"  MARKET_RATE = ${MARKET_RATE:.2f}/kg,  INTERNAL_RATE = ${INTERNAL_RATE:.2f}/kg")

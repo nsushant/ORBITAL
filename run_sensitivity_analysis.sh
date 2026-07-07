@@ -14,6 +14,7 @@
 set -euo pipefail
 
 N_TRIALS=${N_TRIALS:-5}
+REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 JULIA="julia --project=. -t auto"
 PYTHON="python"
 DEM_DIR="outputs/sensitivity_demands"
@@ -42,10 +43,14 @@ echo "╔═══════════════════════�
 echo "║  Phase 1: Generating sensitivity demand files           ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
-if [[ ${#SE_FILTER[@]} -eq 0 ]]; then
-    $JULIA generate_sensitivity_demands.jl
+if [ "$REGEN_DEMANDS" = "true" ]; then
+    if [[ ${#SE_FILTER[@]} -eq 0 ]]; then
+        $JULIA generate_sensitivity_demands.jl
+    else
+        $JULIA generate_sensitivity_demands.jl "${SE_FILTER[@]}"
+    fi
 else
-    $JULIA generate_sensitivity_demands.jl "${SE_FILTER[@]}"
+    echo "Skipped (set REGEN_DEMANDS=true to regenerate)."
 fi
 
 echo ""
@@ -106,10 +111,20 @@ fi
 
 # SE4 — vehicle ΔV budget (dv_budget passed to MDLS; GAs unaffected)
 if run_se "dvbudget"; then
-    for lv in 1500 3000 5000 8000; do
+    for lv in 1500 3000 5000 8000 10000; do
         for trial in $(seq 1 $N_TRIALS); do
             echo "── SE4 dvbudget  lv=$lv  trial=$trial ──"
             run_pair "dvbudget_${lv}" "$trial" "$lv"
+        done
+    done
+fi
+
+# SE6 — mixed fleet: 100 Starlink + 100 Planet Labs, 10k m/s budget, 5-year horizon
+if run_se "mixed_fleet"; then
+    for lv in tight_normal loose_uniform; do
+        for trial in $(seq 1 $N_TRIALS); do
+            echo "── SE6 mixed_fleet  lv=$lv  trial=$trial ──"
+            run_pair "mixed_fleet_${lv}" "$trial" "10000"
         done
     done
 fi

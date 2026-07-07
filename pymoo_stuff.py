@@ -163,7 +163,8 @@ class OOSProblem(Problem):
                         arr_s = float(arr_grid[ai])
                         if arr_s > deadlines[i]:
                             break
-                        if (int(leg_from), int(sat_ids[i]), dep_s, arr_s) in self.cost_table:
+                        c = self.cost_table.get((int(leg_from), int(sat_ids[i]), dep_s, arr_s), np.inf)
+                        if c < 1e7:
                             valid_slots.append(arr_s)
                             if len(valid_slots) >= n_slots:
                                 break
@@ -179,7 +180,8 @@ class OOSProblem(Problem):
                         arr_s = float(arr_grid[ai])
                         if arr_s > deadlines[i]:
                             break
-                        if (int(leg_from), int(sat_ids[i]), dep_s, arr_s) in self.cost_table:
+                        c = self.cost_table.get((int(leg_from), int(sat_ids[i]), dep_s, arr_s), np.inf)
+                        if c < 1e7:
                             arrivals[i] = arr_s
                             found = True
                             break
@@ -263,7 +265,8 @@ class OOSProblem(Problem):
                 departures[i] = arrivals[i] + service_times[i]
 
                 if k == 0:
-                    legs.append((depot_id, sat_ids[i], 0.0, arrivals[i]))
+                    dep_s = float(self.dep_grid[np.searchsorted(self.dep_grid, 0.0).clip(0, len(self.dep_grid) - 1)])
+                    legs.append((depot_id, sat_ids[i], dep_s, arrivals[i]))
                 else:
                     prev = sorted_idx[k - 1]
                     if depot_vis[k - 1]:
@@ -272,8 +275,9 @@ class OOSProblem(Problem):
                         arr_depot_min = departures[prev] + tof_to_dep
                         arr_depot     = max(depot_arrivals[prev], arr_depot_min)
                         dep_depot     = arr_depot + self.refuel_time
+                        dep_depot_s   = float(self.dep_grid[np.searchsorted(self.dep_grid, dep_depot).clip(0, len(self.dep_grid) - 1)])
                         legs.append((sat_ids[prev], depot_id, departures[prev], arr_depot))
-                        legs.append((depot_id, sat_ids[i], dep_depot, arrivals[i]))
+                        legs.append((depot_id, sat_ids[i], dep_depot_s, arrivals[i]))
                     else:
                         legs.append((sat_ids[prev], sat_ids[i], departures[prev], arrivals[i]))
 

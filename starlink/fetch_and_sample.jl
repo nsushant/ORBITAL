@@ -16,16 +16,15 @@ const TARGET_SATS    = 200
 const SATS_PER_PLANE = 2
 
 # ── Satellite asset values ────────────────────────────────────────────────────
-# Internal SpaceX launch rate = 0.5 × ($74M / 20,000 kg) = $1,850/kg
-# V1 manufacturing $770K + $1,850/kg × 260 kg = $1,251,000
-# V2 manufacturing $1,770K + $1,850/kg × 800 kg = $3,250,000
-const INT_LAUNCH_RATE = 1_850.0   # $/kg — internal SpaceX rate (0.5 × market)
-const V1_MFG_COST     = 770_000.0
-const V2_MFG_COST     = 1_770_000.0
-const V1_MASS_KG      = 260.0
-const V2_MASS_KG      = 800.0
-const V1_VALUE = V1_MFG_COST + INT_LAUNCH_RATE * V1_MASS_KG   # $1,251,000
-const V2_VALUE = V2_MFG_COST + INT_LAUNCH_RATE * V2_MASS_KG   # $3,250,000
+# Manufacturing: $1,000/kg (mass-production rate)
+# Launch: $1,850/kg internal SpaceX rate (0.5 × Falcon 9 market rate $3,700/kg)
+# V1.5: $1,000/kg × 303 kg mfg + $1,850/kg × 303 kg launch = $864,150
+# V2 Mini: $1,000/kg × 800 kg mfg + $1,850/kg × 800 kg launch = $2,280,000
+const INT_LAUNCH_RATE = 1_850.0   # $/kg — internal SpaceX rate
+const V1_MASS_KG      = 303.0     # kg — V1.5 DAS-filed mass
+const V2_MASS_KG      = 800.0     # kg — V2 Mini DAS-filed mass
+const V1_VALUE = (1_000.0 + INT_LAUNCH_RATE) * V1_MASS_KG   # $864,150
+const V2_VALUE = (1_000.0 + INT_LAUNCH_RATE) * V2_MASS_KG   # $2,280,000
 
 # ── Shell definitions (inclination °, altitude km) ────────────────────────────
 const SHELLS = [
@@ -117,17 +116,47 @@ function fetch_and_sample(; n_targets=TARGET_SATS, seed=42)
     rng     = MersenneTwister(seed)
     sampled = []   # (obj, shell_idx)
 
-    for (sh_idx, planes) in enumerate(shell_planes)
-        for (_, entries) in collect(planes)
-            take   = min(SATS_PER_PLANE, length(entries))
-            chosen = shuffle!(rng, entries)[1:take]
-            for obj in chosen; push!(sampled, (obj, sh_idx)); end
-        end
-    end
+    # Count catalog sats per shell (proxy for deployment size)
+    shell_counts = [sum(length(v) for v in values(shell_planes[sh]); init=0)
+                    for sh in eachindex(SHELLS)]
+    total_assigned = sum(shell_counts)
 
-    if length(sampled) > n_targets
-        shuffle!(rng, sampled)
-        sampled = sampled[1:n_targets]
+    if total_assigned == 0 || n_targets >= total_assigned
+        # No trimming needed — take 2-per-plane across all shells
+        for (sh_idx, planes) in enumerate(shell_planes)
+            for (_, entries) in collect(planes)
+                take   = min(SATS_PER_PLANE, length(entries))
+                chosen = shuffle!(rng, copy(entries))[1:take]
+                for obj in chosen; push!(sampled, (obj, sh_idx)); end
+            end
+        end
+    else
+        # Proportional shell allocation: each shell gets slots ∝ its catalog count
+        shell_alloc = round.(Int, n_targets .* shell_counts ./ total_assigned)
+        # Fix rounding so allocations sum to exactly n_targets
+        diff = n_targets - sum(shell_alloc)
+        if diff != 0
+            order = sortperm(shell_counts; rev=true)
+            for i in 1:abs(diff)
+                shell_alloc[order[i]] += sign(diff)
+            end
+        end
+        @info "Shell allocation" alloc=collect(zip([s.inc for s in SHELLS], shell_alloc))
+
+        for (sh_idx, planes) in enumerate(shell_planes)
+            alloc  = shell_alloc[sh_idx]
+            alloc == 0 && continue
+            # Shuffle the RAAN planes so we don't always pick the same ones
+            plane_list = shuffle!(rng, collect(planes))
+            n_taken = 0
+            for (_, entries) in plane_list
+                n_taken >= alloc && break
+                take   = min(SATS_PER_PLANE, length(entries), alloc - n_taken)
+                chosen = shuffle!(rng, copy(entries))[1:take]
+                for obj in chosen; push!(sampled, (obj, sh_idx)); end
+                n_taken += take
+            end
+        end
     end
     @info "Sampled" n_sampled=length(sampled) n_target=n_targets
 
@@ -178,12 +207,19 @@ function fetch_and_sample(; n_targets=TARGET_SATS, seed=42)
     @info "Depot placed" inc_deg=53.0 alt_km=550.0 raan_deg=round(rad2deg(depot_raan), digits=1)
     @info "Total nodes" sats=length(sats) targets=length(launch_dates)
 
-    # Save sat_values for Python side
+    # Save sat_values and launch_dates for Python/Julia consumers
     mkpath(joinpath(@__DIR__, "..", "outputs"))
     open(joinpath(@__DIR__, "..", "outputs", "sat_values.json"), "w") do f
         JSON3.write(f, sat_values)
     end
     @info "Saved sat_values.json" path="outputs/sat_values.json"
+
+    launch_dates_dict = Dict(sats[i].name => string(launch_dates[i])
+                             for i in eachindex(launch_dates))
+    open(joinpath(@__DIR__, "..", "outputs", "sat_launch_dates.json"), "w") do f
+        JSON3.write(f, launch_dates_dict)
+    end
+    @info "Saved sat_launch_dates.json" path="outputs/sat_launch_dates.json"
 
     return sats, launch_dates, sat_values
 end

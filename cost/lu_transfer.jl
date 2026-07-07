@@ -24,16 +24,29 @@ function circular_velocity(a)
     return sqrt(MU_LT / a)
 end
 
-# ── Phasing ΔV ─────────────────────────────────────────────────────────────────
-function phasing(a0, p1, p2, k)
+# ── Phasing ΔV + duration ──────────────────────────────────────────────────────
+# Returns (dv_km_s, phasing_duration_s).
+# Finds minimum k such that |ap - a0| ≤ Δa_max (km); no arbitrary orbit cap.
+# The caller adds phasing_duration_s to the arrival epoch so the cost table
+# reflects the true arrival time and the scheduler can trade off ΔV vs time.
+function phasing(a0, p1, p2; Δa_max=50.0)
     n0 = sqrt(MU_LT / a0^3)
     T0 = 2π / n0
     δθ = mod(p2 - p1, 2π)
-    Tp = k * T0 + (δθ / n0)
-    ap = (MU_LT * (Tp / (2π))^2)^(1/3)
-    arg = MU_LT * (2/a0 - 1/ap)
-    arg < 0 && return Inf
-    return 2 * abs(sqrt(arg) - sqrt(MU_LT / a0))
+    δθ < 1e-10 && return 0.0, 0.0   # already co-located
+    k = 1
+    while true
+        Tp_orb = T0 + δθ / (n0 * k)          # period per revolution (k revs in phasing orbit)
+        ap = (MU_LT * (Tp_orb / (2π))^2)^(1/3)
+        abs(ap - a0) ≤ Δa_max && break
+        k += 1
+        k > 10000 && break                    # safety cap
+    end
+    Tp_orb   = T0 + δθ / (n0 * k)
+    Tp_total = k * Tp_orb                     # total phasing duration (k revolutions)
+    ap = (MU_LT * (Tp_orb / (2π))^2)^(1/3)
+    dv = 2 * abs(sqrt(MU_LT * (2/a0 - 1/ap)) - sqrt(MU_LT / a0))
+    return dv, Tp_total   # km/s, seconds
 end
 
 # ── Internal solvers ───────────────────────────────────────────────────────────
@@ -113,7 +126,11 @@ function solve_coasting_orbit_case2(a0, I0, af, If, Delta_RAAN_objective, Tf_sec
     end
 
     x0  = [Delta_a_total/(2*a_bar), Delta_I_total/2.0, 0.0, 0.0]
-    sol = nlsolve(equations!, x0)
+    sol = nlsolve(equations!, x0; iterations=100, ftol=1e-6)
+    !converged(sol) && return Dict("ac" => a0, "Ic" => I0,
+        "Delta_a_transfer" => 0.0, "Delta_I_transfer" => 0.0,
+        "Delta_a_adjust"   => Delta_a_total, "Delta_I_adjust" => Delta_I_total,
+        "Jt" => 1e4, "Ja" => 1e4, "J_total" => 2e4)
     x1, x2, _, _ = sol.zero
     Delta_a_transfer = x1 * a_bar
     Delta_I_transfer = x2

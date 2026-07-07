@@ -52,7 +52,8 @@ Generate service demands for satellites within a ΔV range from the depot.
 | `"num_satellites"` | Int | Fix satellite pool size (num_demands >= num_satellites) |
 | `"type"`           | String | "random" (default); "physical" reserved for future |
 """
-function generate_demands(simulation, demand_params::Dict) :: Dict{String, Any}
+function generate_demands(simulation, demand_params::Dict;
+                          cost_table=nothing) :: Dict{String, Any}
 
     # ── Parse params ──────────────────────────────────────────────────────────
     num_demands  = Int(demand_params["num_demands"])
@@ -72,15 +73,19 @@ function generate_demands(simulation, demand_params::Dict) :: Dict{String, Any}
 
     rng = MersenneTwister(seed)
 
-    # ── Load cost table ───────────────────────────────────────────────────────
-    cost_table_path = "outputs/cost_table.jld2"
-    isfile(cost_table_path) ||
-        error("Cost table not found at $cost_table_path — run gen_cost_table(simulation) first.")
-
-    @info "Loading cost table from disk ..."
-    local CostTable
-    @load cost_table_path CostTable
-    @info "Cost table loaded" n_entries=length(CostTable)
+    # ── Load cost table (or use pre-loaded) ───────────────────────────────────
+    CostTable = if cost_table !== nothing
+        cost_table
+    else
+        cost_table_path = "outputs/cost_table.jld2"
+        isfile(cost_table_path) ||
+            error("Cost table not found at $cost_table_path — run gen_cost_table(simulation) first.")
+        @info "Loading cost table from disk ..."
+        local CostTable
+        @load cost_table_path CostTable
+        @info "Cost table loaded" n_entries=length(CostTable)
+        CostTable
+    end
 
     # ── Find depot indices ────────────────────────────────────────────────────
     depot_idxs   = findall(n -> startswith(n, "depot"), simulation.names)

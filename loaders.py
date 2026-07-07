@@ -3,10 +3,11 @@ loaders.py — data loading utilities for the OOS pymoo problem.
 
 Functions
 ---------
-load_sim_name_map(sim_path)   -> dict[str, int]
-load_demands(demand_path)     -> dict
-load_cost_table(table_path)   -> dict[tuple, float]
-snap_cost(cost_table, ...)    -> float
+load_sim_name_map(sim_path)      -> dict[str, int]
+load_demands(demand_path)        -> dict
+load_cost_table(table_path)      -> dict[tuple, float]
+load_cost_table_jld2(table_path) -> dict[tuple, float]  (reads cost_table.jld2)
+snap_cost(cost_table, ...)       -> float
 """
 
 import h5py
@@ -150,6 +151,39 @@ def load_min_tof_table(path="outputs/min_tof_table.jld2"):
         dv       = float(row["second"]["2"])
         result[(from_idx, to_idx)] = (min_tof, dv)
     return result
+
+
+def load_cost_table_jld2(table_path="outputs/cost_table.jld2"):
+    """
+    Load cost_table.jld2 written by Julia's gen_cost_table.jl.
+
+    JLD2 is HDF5-based. The file stores a Julia Dict{Tuple{Int,Int,Float64,Float64},Float64}
+    as a flat structured array with dtype:
+      [('first', [('1', i8), ('2', i8), ('3', f8), ('4', f8)]), ('second', f8)]
+    where first=(from_idx, to_idx, dep_days, arr_days) and second=cost_m_s.
+
+    Returns the same (cost_dict, meta) as load_cost_table().
+    """
+    with h5py.File(table_path, "r") as f:
+        top_ref = f["CostTable"][()].item()[0]
+        kvvec   = f[top_ref][()]
+
+    from_v = kvvec["first"]["1"].astype(int)
+    to_v   = kvvec["first"]["2"].astype(int)
+    dep_v  = kvvec["first"]["3"].astype(float)
+    arr_v  = kvvec["first"]["4"].astype(float)
+    cost_v = kvvec["second"].astype(float)
+
+    cost_dict = {
+        (int(fr), int(to), float(dep), float(arr)): float(c)
+        for fr, to, dep, arr, c in zip(from_v, to_v, dep_v, arr_v, cost_v)
+    }
+    meta = {
+        "depot_idx": int(max(from_v.max(), to_v.max())),
+        "dep_grid":  np.array(sorted(set(dep_v.tolist())), dtype=float),
+        "arr_grid":  np.array(sorted(set(arr_v.tolist())), dtype=float),
+    }
+    return cost_dict, meta
 
 
 def snap_cost(cost_table, dep_grid, arr_grid, from_idx, to_idx, dep, arr):

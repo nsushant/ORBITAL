@@ -86,8 +86,8 @@ print("\nComputing per-scenario reference points …")
 # f2: expected do-nothing loss (mixed V1/V2 fleet) + 10% safety margin
 # f3: maximum fleet size + small buffer
 N_DEMANDS         = 200
-V1_ASSET_VAL      = 1_251_000.0
-V2_ASSET_VAL      = 3_250_000.0
+V1_ASSET_VAL      = 864_150.0
+V2_ASSET_VAL      = 2_280_000.0
 V2_FRACTION       = 0.30
 DV_BUDGET         = 5000.0
 N_VEHICLES        = 20

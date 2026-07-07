@@ -227,11 +227,28 @@ function build_min_dv_table(cost_table, n_nodes)
 end
 
 const INFEASIBLE_LEG_COST = 1.0e6
+const COST_TABLE_PERIOD   = 400.0   # days — cost table time extent (used for long-horizon wrapping)
 
+# For missions longer than COST_TABLE_PERIOD days, wrap departure epoch onto the cost table's
+# time range using modular arithmetic (J2 precession is approximately periodic over ~400 days).
 function snap_cost(CostTable, from_idx, to_idx, dep_epoch, arr_epoch)
-    dep_snap = clamp(round(dep_epoch / 15.0) * 15.0, 0.0, 400.0)
-    arr_snap = clamp(round(arr_epoch / 15.0) * 15.0, 15.0, 400.0)
+    tof     = arr_epoch - dep_epoch
+    dep_w   = mod(dep_epoch, COST_TABLE_PERIOD)
+    arr_w   = dep_w + tof
+    dep_snap = clamp(round(dep_w / 15.0) * 15.0,  0.0, COST_TABLE_PERIOD)
+    arr_snap = clamp(round(arr_w / 15.0) * 15.0, 15.0, COST_TABLE_PERIOD)
     get(CostTable, (from_idx, to_idx, dep_snap, arr_snap), INFEASIBLE_LEG_COST)
+end
+
+# ── Weibull depreciation ───────────────────────────────────────────────────────
+# Models satellite asset value decay with age using a Weibull survival function.
+# k=1.5 (mild wear-out), λ=5 years characteristic life.
+const WEIBULL_LAMBDA = 5.0   # years
+const WEIBULL_K      = 1.5   # shape (k>1 → accelerating depreciation)
+
+function weibull_depreciate(base_value::Float64, age_years::Float64) :: Float64
+    age_years <= 0.0 && return base_value
+    return base_value * exp(-(age_years / WEIBULL_LAMBDA)^WEIBULL_K)
 end
 
 function get_best_next(current_sim_idx, current_time, unrouted_set,
@@ -252,9 +269,9 @@ function get_best_next(current_sim_idx, current_time, unrouted_set,
     return best_uid, best_dv
 end
 
-function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_time=0.0, refuel_time=0.5)
+function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_time=0.0, refuel_time=0.5, min_tof_table=nothing)
     name_to_idx = Dict(sim.names[i] => i for i in eachindex(sim.names))
-    MinTOFTable = build_min_tof_table()
+    MinTOFTable = min_tof_table !== nothing ? min_tof_table : build_min_tof_table()
     depot_idxs  = findall(n -> startswith(n, "depot"), sim.names)
 
     sat_ids      = demands["sat_identifiers"]
