@@ -7,7 +7,7 @@ Public API
 make_greedy_schedule(d, min_tof_table, name_to_idx, depot_id, nvehicles, ...)
     -> (tours, unserved_set)
 
-encode_greedy_to_flat(tours, unserved, N, deadlines)
+encode_greedy_to_flat(tours, unserved, N, deadlines, max_deadline)
     -> ndarray shape (4*N,)
 
 GreedySampling(greedy_x)  — pymoo Sampling subclass
@@ -128,26 +128,38 @@ def make_greedy_schedule(d, min_tof_table, name_to_idx, depot_id,
 
 
 # ---------------------------------------------------------------------------
-# Encode greedy schedule → flat pymoo array (4-group layout)
+# Encode greedy schedule → flat pymoo array (4N layout)
 # ---------------------------------------------------------------------------
 
-def encode_greedy_to_flat(tours, unserved, N, deadlines):
+def encode_greedy_to_flat(tours, unserved, N, deadlines, max_deadline):
     """
-    Convert a greedy schedule into the flat array used by OOSProblem.
+    Convert a greedy schedule into the flat array used by OOSProblem (4N encoding).
 
-    Layout: x[0:5N] = [visit_order | vehicle_assignments | arrivals | depot_visits | depot_arrivals]
+    Layout:
+      x[0:N]    vehicle_assignments   [0, maxV]
+      x[N:2N]   arrivals_norm         [0, 1]   (arrival / deadline)
+      x[2N:3N]  depot_visits          [0, 1]
+      x[3N:4N]  depot_arrivals_norm   [0, 1]   (depot_arrival / max_deadline)
 
-    Unserved demands get vehicle_assignment=0, arrival=0, depot_visit=0, depot_arrival=0.
-    depot_arrivals[i] is the arrival time at the depot after serving demand i
-    (meaningful only when depot_visits[i]=1).
+    Unserved demands get vehicle_assignment=0, arrivals_norm=0, depot_visit=0,
+    depot_arrivals_norm=0.
+
+    # OLD 5N layout (revert by restoring 5*N and old segment names):
+    # x = np.zeros(5 * N)
+    # visit_order_seg  = x[0:N]       # visit_order_seg[pos] = k / K
+    # veh_assign_seg   = x[N:2*N]
+    # arrival_seg      = x[2*N:3*N]   # absolute arrival times
+    # depot_vis_seg    = x[3*N:4*N]
+    # depot_arr_seg    = x[4*N:5*N]   # absolute depot arrival times
     """
-    x = np.zeros(5 * N)
+    x = np.zeros(4 * N)
 
-    visit_order_seg  = x[0:N]
-    veh_assign_seg   = x[N:2*N]
-    arrival_seg      = x[2*N:3*N]
-    depot_vis_seg    = x[3*N:4*N]
-    depot_arr_seg    = x[4*N:5*N]
+    veh_assign_seg   = x[0:N]
+    arrival_norm_seg = x[N:2*N]
+    depot_vis_seg    = x[2*N:3*N]
+    depot_arr_seg    = x[3*N:4*N]
+
+    deadlines = np.asarray(deadlines, dtype=float)
 
     for v_idx, tour in enumerate(tours):
         v = v_idx + 1
@@ -155,15 +167,13 @@ def encode_greedy_to_flat(tours, unserved, N, deadlines):
         if not demand_steps:
             continue
 
-        K = len(demand_steps)
-
-        for k, step in enumerate(demand_steps):
+        for step in demand_steps:
             pos = step['pos']
-            veh_assign_seg[pos]  = v
-            visit_order_seg[pos] = k / K
-            arrival_seg[pos]     = step['arrival']
+            veh_assign_seg[pos]   = v
+            # normalise arrival by per-demand deadline
+            arrival_norm_seg[pos] = step['arrival'] / deadlines[pos] if deadlines[pos] > 0 else 0.0
 
-        # Mark depot visits and capture depot arrival times
+        # Mark depot visits and capture normalised depot arrival times
         for step_idx, step in enumerate(tour):
             if step['type'] != 'demand':
                 continue
@@ -171,45 +181,60 @@ def encode_greedy_to_flat(tours, unserved, N, deadlines):
             next_steps = tour[step_idx + 1:]
             if next_steps and next_steps[0]['type'] == 'depot':
                 depot_vis_seg[pos] = 1
-                depot_arr_seg[pos] = next_steps[0]['arrival']
+                depot_arr_seg[pos] = next_steps[0]['arrival'] / max_deadline if max_deadline > 0 else 0.0
 
-        # Circular-wrap: last demand always has depot_visit=1 (forced in repair anyway)
+        # Circular-wrap: last demand always has depot_visit=1
         last_demand = demand_steps[-1]
         depot_vis_seg[last_demand['pos']] = 1
-        # depot_arr_seg for last demand left as 0 (no subsequent demand to gate)
 
     return x
 
 
 # ---------------------------------------------------------------------------
-# Load greedy solution from Julia JSON → flat 4-group encoding
+# Load greedy solution from Julia JSON → flat 4N encoding
 # ---------------------------------------------------------------------------
 
 def load_greedy_from_json(path, N):
     """
     Read the JSON written by Julia's save_schedule_json and convert to the
-    flat 4-group NSGA-III encoding (same output shape as encode_greedy_to_flat).
+    flat 4N OOSProblem encoding.
 
     Julia visitedUID convention:
       uid > 0  → demand index (1-based) → Python pos = uid - 1
       uid < 0  → depot visit marker (ignored for encoding)
+
+    # OLD 5N layout (revert by restoring 5*N and old segment names):
+    # x = np.zeros(5 * N)
+    # visit_order_seg  = x[0:N]       # visit_order_seg[pos] = k / K
+    # veh_assign_seg   = x[N:2*N]
+    # arrival_seg      = x[2*N:3*N]   # absolute arrival times
+    # depot_vis_seg    = x[3*N:4*N]
+    # depot_arr_seg    = x[4*N:5*N]   # absolute depot arrivals
     """
     import json
     with open(path) as f:
         data = json.load(f)
 
-    x = np.zeros(5 * N)
-    visit_order_seg  = x[0:N]
-    veh_assign_seg   = x[N:2*N]
-    arrival_seg      = x[2*N:3*N]
-    depot_vis_seg    = x[3*N:4*N]
-    depot_arr_seg    = x[4*N:5*N]
+    x = np.zeros(4 * N)
+    veh_assign_seg   = x[0:N]
+    arrival_norm_seg = x[N:2*N]
+    depot_vis_seg    = x[2*N:3*N]
+    depot_arr_seg    = x[3*N:4*N]
+
+    # Collect all absolute arrival times to compute max_deadline for normalisation
+    all_arrivals = []
+    for veh in data["schedule"]:
+        all_arrivals.extend(veh["arrivals"])
+    max_arr = max(all_arrivals) if all_arrivals else 1.0
+    # Use 2× max observed arrival as max_deadline proxy (matches OOSProblem convention)
+    max_deadline = 2.0 * max_arr if max_arr > 0 else 1.0
 
     for v_idx, veh in enumerate(data["schedule"]):
         v        = v_idx + 1
         uids     = veh["visitedUID"]
         arrivals = veh["arrivals"]
 
+        # Collect per-vehicle demand deadline to normalise arrival times
         demand_positions = [
             (i, uid - 1, arrivals[i])
             for i, uid in enumerate(uids) if uid > 0
@@ -219,31 +244,28 @@ def load_greedy_from_json(path, N):
             continue
 
         for k, (tour_i, pos, arr) in enumerate(demand_positions):
-            veh_assign_seg[pos]  = v
-            visit_order_seg[pos] = k / K
-            arrival_seg[pos]     = arr
+            veh_assign_seg[pos]   = v
+            # Normalise: we don't have per-demand deadlines here, use arr/max_deadline
+            # as a conservative proxy (arr <= deadline always, so norm <= 1)
+            arrival_norm_seg[pos] = arr / max_deadline if max_deadline > 0 else 0.0
 
-            # depot_visit = 1 if the next tour entry after this demand is a
-            # depot marker (uid < 0), or if this is the last demand in the tour.
-            # Also capture the depot arrival time from the JSON.
             if k == K - 1:
                 depot_vis_seg[pos] = 1
-                # last demand: depot_arr left as 0 (no subsequent demand)
             else:
                 next_tour_i = demand_positions[k + 1][0]
                 depot_indices = [j for j in range(tour_i + 1, next_tour_i) if uids[j] < 0]
                 if depot_indices:
                     depot_vis_seg[pos] = 1
-                    depot_arr_seg[pos] = arrivals[depot_indices[0]]
+                    depot_arr_seg[pos] = arrivals[depot_indices[0]] / max_deadline
 
     unassigned = data.get("unassigned")
     if unassigned and unassigned.get("UIDs"):
         for uid in unassigned["UIDs"]:
             pos = uid - 1
             if 0 <= pos < N:
-                veh_assign_seg[pos] = 0
-                arrival_seg[pos]    = 0.0
-                depot_vis_seg[pos]  = 0
+                veh_assign_seg[pos]   = 0
+                arrival_norm_seg[pos] = 0.0
+                depot_vis_seg[pos]    = 0
 
     return x
 
@@ -251,6 +273,228 @@ def load_greedy_from_json(path, N):
 # ---------------------------------------------------------------------------
 # pymoo Sampling wrapper
 # ---------------------------------------------------------------------------
+
+def load_greedy_RK_from_json(path, N):
+    """
+    Read Julia greedy JSON and convert to the flat N random-keys encoding
+    used by OOSProblemRK.
+
+    x[i] = vehicle + (k + 0.5) / K   for demand i on vehicle v at position k of K
+    x[i] = 0.5                         for unserved demands (floor=0 → unserved)
+    """
+    import json
+    with open(path) as f:
+        data = json.load(f)
+
+    x = np.full(N, 0.5)   # default: unserved (floor=0)
+
+    for v_idx, veh in enumerate(data["schedule"]):
+        v    = v_idx + 1
+        uids = veh["visitedUID"]
+        demand_positions = [uid - 1 for uid in uids if uid > 0]
+        K = len(demand_positions)
+        if K == 0:
+            continue
+        for k, pos in enumerate(demand_positions):
+            if 0 <= pos < N:
+                x[pos] = v + (k + 0.5) / K   # vehicle + fractional order key
+
+    unassigned = data.get("unassigned")
+    if unassigned and unassigned.get("UIDs"):
+        for uid in unassigned["UIDs"]:
+            pos = uid - 1
+            if 0 <= pos < N:
+                x[pos] = 0.5   # unserved
+
+    return x
+
+
+class GreedySamplingRK(Sampling):
+    """
+    Seed the initial population with the greedy solution (N random-keys encoding)
+    as the first individual; fill the rest with uniform random samples.
+    """
+
+    def __init__(self, greedy_x):
+        super().__init__()
+        self.greedy_x = greedy_x   # shape (N,)
+
+    def _do(self, problem, n_samples, **kwargs):
+        X = np.random.uniform(
+            problem.xl, problem.xu,
+            (n_samples, problem.n_var)
+        )
+        X[0] = np.clip(self.greedy_x, problem.xl, problem.xu)
+        return X
+
+
+class GreedySamplingRK2(Sampling):
+    """
+    Seed population for the 2N RK encoding (OOSProblemRK_OT).
+    First N genes: greedy RK solution.
+    Second N genes: depot positions inferred from a budget simulation on the
+    greedy chromosome — so the seed already encodes where refuels are needed.
+    Rest of population: random demand genes, depot genes all inactive (frac=0).
+    """
+
+    def __init__(self, greedy_x):
+        super().__init__()
+        self.greedy_x = greedy_x   # shape (N,)
+
+    def _do(self, problem, n_samples, **kwargs):
+        N = problem.Ndems
+
+        # Random population: depot genes all inactive (floor part = 0 since frac < 1
+        # and vehicle assignments ≥ 1, so keeping values in [0,1) makes them inactive)
+        X = np.random.uniform(problem.xl, problem.xu, (n_samples, problem.n_var))
+        X[:, N:] = np.random.uniform(0.0, 1.0, (n_samples, N))
+
+        # Build greedy seed
+        seed = np.zeros(2 * N)
+        seed[:N] = np.clip(self.greedy_x, problem.xl[:N], problem.xu[:N])
+
+        vehicle_d = np.floor(seed[:N]).astype(int)
+        order_d   = seed[:N] - vehicle_d
+
+        depot_slot = 0  # next free depot gene slot in seed[N:]
+
+        for v in range(1, problem.maxV + 1):
+            dem_idx = np.where(vehicle_d == v)[0]
+            if len(dem_idx) == 0:
+                continue
+            dem_sorted = dem_idx[np.argsort(order_d[dem_idx])]
+
+            state_sat = problem.depot_id
+            state_dep = 0.0
+            cum_dv    = 0.0
+            prev_key  = None
+
+            for i in dem_sorted:
+                sid     = int(problem.sat_ids[i])
+                key_dir = (state_sat, sid)
+                tof_dir = problem.min_tof_table[key_dir][0] if key_dir in problem.min_tof_table else 0.0
+                dep_s   = float(problem.dep_grid[np.searchsorted(problem.dep_grid, state_dep)
+                                                  .clip(0, len(problem.dep_grid) - 1)])
+                arr     = None
+                dv_dir  = np.inf
+                for ai in range(int(np.searchsorted(problem.arr_grid, state_dep + tof_dir)
+                                    .clip(0, len(problem.arr_grid) - 1)), len(problem.arr_grid)):
+                    a_cand = float(problem.arr_grid[ai])
+                    if a_cand + problem.service_times[i] > problem.deadlines[i]:
+                        break
+                    c = problem.cost_table.get((state_sat, sid, dep_s, a_cand), np.inf)
+                    if not np.isinf(c) and c <= problem.dv_budget:
+                        arr    = a_cand
+                        dv_dir = c
+                        break
+
+                if arr is None:
+                    continue
+
+                new_cum = dv_dir if state_sat == problem.depot_id else cum_dv + dv_dir
+
+                if new_cum > problem.dv_budget and state_sat != problem.depot_id:
+                    # Record a depot gene between the previous demand key and this one
+                    curr_key   = order_d[i]
+                    depot_key  = (prev_key + curr_key) / 2.0 if prev_key is not None else curr_key * 0.5
+                    if depot_slot < N:
+                        seed[N + depot_slot] = v + depot_key
+                        depot_slot += 1
+
+                    # Approximate depot visit: reset state
+                    state_sat = problem.depot_id
+                    state_dep = state_dep + problem.refuel_time + 1.0
+                    cum_dv    = 0.0
+
+                    # Re-attempt this demand from depot
+                    key_fr  = (problem.depot_id, sid)
+                    tof_fr  = problem.min_tof_table[key_fr][0] if key_fr in problem.min_tof_table else 0.0
+                    dep_s2  = float(problem.dep_grid[np.searchsorted(problem.dep_grid, state_dep)
+                                                      .clip(0, len(problem.dep_grid) - 1)])
+                    arr     = None
+                    dv_dir  = np.inf
+                    for ai in range(int(np.searchsorted(problem.arr_grid, state_dep + tof_fr)
+                                        .clip(0, len(problem.arr_grid) - 1)), len(problem.arr_grid)):
+                        a_cand = float(problem.arr_grid[ai])
+                        if a_cand + problem.service_times[i] > problem.deadlines[i]:
+                            break
+                        c = problem.cost_table.get((problem.depot_id, sid, dep_s2, a_cand), np.inf)
+                        if not np.isinf(c) and c <= problem.dv_budget:
+                            arr    = a_cand
+                            dv_dir = c
+                            break
+
+                    if arr is None:
+                        continue
+
+                state_sat = sid
+                state_dep = arr + problem.service_times[i]
+                cum_dv    = dv_dir if state_sat == problem.depot_id else cum_dv + dv_dir
+                prev_key  = order_d[i]
+
+        X[0] = seed
+        return X
+
+
+def load_greedy_2N_from_json(path, N):
+    """
+    Read Julia greedy JSON and convert to the flat 2N OOSProblemDecoder encoding.
+
+    Layout:
+      x[0:N]   visit_order keys   float [0, 1]   (order within vehicle / K)
+      x[N:2N]  vehicle_assignments int  [0, maxV]
+
+    Unserved demands get vehicle_assignment=0, visit_key=0.
+    """
+    import json
+    with open(path) as f:
+        data = json.load(f)
+
+    x = np.zeros(2 * N)
+    visit_key_seg  = x[0:N]
+    veh_assign_seg = x[N:2*N]
+
+    for v_idx, veh in enumerate(data["schedule"]):
+        v = v_idx + 1
+        uids = veh["visitedUID"]
+        demand_positions = [uid - 1 for uid in uids if uid > 0]
+        K = len(demand_positions)
+        if K == 0:
+            continue
+        for k, pos in enumerate(demand_positions):
+            if 0 <= pos < N:
+                veh_assign_seg[pos] = v
+                visit_key_seg[pos]  = k / K   # [0, 1) order keys
+
+    unassigned = data.get("unassigned")
+    if unassigned and unassigned.get("UIDs"):
+        for uid in unassigned["UIDs"]:
+            pos = uid - 1
+            if 0 <= pos < N:
+                veh_assign_seg[pos] = 0
+                visit_key_seg[pos]  = 0.0
+
+    return x
+
+
+class GreedySamplingDecoder(Sampling):
+    """
+    Seed the initial population with the greedy solution (2N encoding) as the
+    first individual; fill the rest with uniform random samples within bounds.
+    """
+
+    def __init__(self, greedy_x):
+        super().__init__()
+        self.greedy_x = greedy_x   # shape (2*N,)
+
+    def _do(self, problem, n_samples, **kwargs):
+        X = np.random.uniform(
+            problem.xl, problem.xu,
+            (n_samples, problem.n_var)
+        )
+        X[0] = np.clip(self.greedy_x, problem.xl, problem.xu)
+        return X
+
 
 class GreedySampling(Sampling):
     """
@@ -260,7 +504,7 @@ class GreedySampling(Sampling):
 
     def __init__(self, greedy_x):
         super().__init__()
-        self.greedy_x = greedy_x   # shape (5*N,)
+        self.greedy_x = greedy_x   # shape (4*N,)
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.random.uniform(

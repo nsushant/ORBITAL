@@ -95,10 +95,9 @@ function generate_demands(simulation, demand_params::Dict;
     sat_idxs     = findall(n -> startswith(n, "sat"), simulation.names)
     sat_idx_set  = Set(sat_idxs)
 
-    # ── Single pass over cost table: build per-sat min ΔV and max TOF ─────────
+    # ── Single pass over cost table: build per-sat min ΔV from depot ────────────
     @info "Scanning cost table for candidate satellites ..."
-    sat_min_dv  = Dict{Int, Float64}()   # sat_idx → min ΔV from any depot
-    sat_max_tof = Dict{Int, Float64}()   # sat_idx → max feasible TOF [days]
+    sat_min_dv = Dict{Int, Float64}()   # sat_idx → min ΔV from any depot
 
     for (key, val) in CostTable
         k_from, k_to, dep, arr = key
@@ -106,22 +105,16 @@ function generate_demands(simulation, demand_params::Dict;
         k_to   in sat_idx_set   || continue
         val >= 1e7              && continue   # mask invalid entries
 
-        tof = arr - dep
-        cur_dv  = get(sat_min_dv,  k_to, Inf)
-        cur_tof = get(sat_max_tof, k_to, 0.0)
-        val < cur_dv  && (sat_min_dv[k_to]  = val)
-        tof > cur_tof && (sat_max_tof[k_to] = tof)
+        cur_dv = get(sat_min_dv, k_to, Inf)
+        val < cur_dv && (sat_min_dv[k_to] = val)
     end
 
     # ── Filter to candidates within ΔV limit ──────────────────────────────────
-    candidate_sats  = String[]
-    max_tof_for_sat = Dict{String, Float64}()
+    candidate_sats = String[]
 
     for si in sat_idxs
         get(sat_min_dv, si, Inf) > dv_limit && continue
-        sat_name = simulation.names[si]
-        push!(candidate_sats, sat_name)
-        max_tof_for_sat[sat_name] = get(sat_max_tof, si, time_dist[2])
+        push!(candidate_sats, simulation.names[si])
     end
 
     isempty(candidate_sats) &&
@@ -163,8 +156,8 @@ function generate_demands(simulation, demand_params::Dict;
         # Sample satellite from pool uniformly
         sat_name = pool[rand(rng, 1:length(pool))]
 
-        # Deadline upper bound for this sat
-        dl_hi = min(Float64(time_dist[2]), max_tof_for_sat[sat_name])
+        # Deadline upper bound — independent of transfer TOF
+        dl_hi = Float64(time_dist[2])
         dl_lo = Float64(time_dist[1])
         dl_hi < dl_lo && (dl_hi = dl_lo + 1.0)   # safety floor
 

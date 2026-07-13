@@ -13,8 +13,13 @@ using JLD2, JSON3, Dates
 using Random
 
 const N_TRIALS    = 5
-const OUT_DIR     = joinpath(@__DIR__, "outputs", "sensitivity_demands")
 const REFUEL_TIME = 0.5   # days — must match GA (run_ga_trial.py)
+
+# Optional --outdir=<path> flag (must appear before SE name filters)
+_outdir_arg = filter(a -> startswith(a, "--outdir="), ARGS)
+const OUT_DIR = isempty(_outdir_arg) ?
+    joinpath(@__DIR__, "outputs", "sensitivity_demands") :
+    _outdir_arg[1][length("--outdir=")+1:end]
 
 # ── Sub-experiment definitions ────────────────────────────────────────────────
 # Each entry: (se_name, levels, base_params, seed_fn)
@@ -26,8 +31,12 @@ const SE3_LEVELS = [3000, 5000, 8000, 12000]
 const SE4_LEVELS = [1500.0, 3000.0, 5000.0, 8000.0, 10000.0]
 const SE5_LEVELS = [500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 6000.0, 8000.0]
 
-const V1_VALUE    = 864_150.0   # $/sat  ($1K/kg mfg + $1,850/kg launch) × 303 kg
-const V2_VALUE    = 2_280_000.0 # $/sat  ($1K/kg mfg + $1,850/kg launch) × 800 kg
+# Per-satellite replacement values from SSCM CER (Foreman et al. 2016) + Wright's law
+# (b=0.67, inflation x2.005 FY2000→2026, alpha=0.2 for mature bus)
+# V1.5: m_dry=294 kg, N=5000 → $250K/sat
+# V2 Mini: m_dry=776 kg, N=2000 → $1.45M/sat
+const V1_VALUE    = 250_000.0
+const V2_VALUE    = 1_450_000.0
 const DEFAULT_ASSET_VALUE = V1_VALUE
 const V2_FRACTION = 0.30        # ~30% of current Starlink fleet is V2 Mini
 const SIM_START_DATE = Date(2024, 1, 1)   # reference epoch for age computation
@@ -69,7 +78,7 @@ subexperiments = [
                                "type"               => "random",
                                "disttype"           => "uniform",
                                "deltaV_dist"        => 8000.0,
-                               "time_dist"          => [50.0, 365.0],
+                               "time_dist"          => [50.0, 1825.0],
                                "service_times"      => [1.0, 5.0],
                                "num_satellites"     => min(100, parse(Int, lv)),
                                "default_asset_value" => DEFAULT_ASSET_VALUE),
@@ -83,7 +92,7 @@ subexperiments = [
                                "type"               => "random",
                                "disttype"           => lv,
                                "deltaV_dist"        => 8000.0,
-                               "time_dist"          => [50.0, 365.0],
+                               "time_dist"          => [50.0, 1825.0],
                                "service_times"      => [1.0, 5.0],
                                "num_satellites"     => 100,
                                "default_asset_value" => DEFAULT_ASSET_VALUE),
@@ -97,7 +106,7 @@ subexperiments = [
                                "type"               => "random",
                                "disttype"           => "uniform",
                                "deltaV_dist"        => Float64(parse(Int, lv)),
-                               "time_dist"          => [50.0, 365.0],
+                               "time_dist"          => [50.0, 1825.0],
                                "service_times"      => [1.0, 5.0],
                                "num_satellites"     => 100,
                                "default_asset_value" => DEFAULT_ASSET_VALUE),
@@ -112,8 +121,7 @@ subexperiments = [
                                "type"               => "random",
                                "disttype"           => "uniform",
                                "deltaV_dist"        => 8000.0,
-                               "time_dist"          => parse(Float64, lv) >= 10000.0 ?
-                                                       [50.0, 1825.0] : [50.0, 365.0],
+                               "time_dist"          => [50.0, 1825.0],
                                "service_times"      => [1.0, 5.0],
                                "num_satellites"     => 100,
                                "default_asset_value" => DEFAULT_ASSET_VALUE),
@@ -127,10 +135,32 @@ subexperiments = [
                                "type"               => "random",
                                "disttype"           => "uniform",
                                "deltaV_dist"        => 8000.0,
-                               "time_dist"          => [50.0, 365.0],
+                               "time_dist"          => [50.0, 1825.0],
                                "service_times"      => [1.0, 5.0],
                                "num_satellites"     => 100,
                                "default_asset_value" => DEFAULT_ASSET_VALUE),
+     seed_fn        = (trial, lv) -> trial * 137,
+     greedy_dv_fn   = (lv) -> parse(Float64, lv)),
+
+    # SE7 — BCR mixed-fleet sweep: all Starlink + Planet Labs sats, 10k demands, 5-yr horizon
+    # Varies dv_budget; uses per-sat replacement values from mixed_sat_values.json
+    # Requires outputs/simulation.h5 and cost_table.jld2 from run_mixed_fleet.jl
+    (name      = "bcr_mixed",
+     levels    = [string(Int(v)) for v in SE5_LEVELS],
+     base_fn   = (lv) -> begin
+         mixed_vals = isfile("outputs/mixed_sat_values.json") ?
+             Dict{String,Float64}(string(k) => v for (k,v) in JSON3.read(read("outputs/mixed_sat_values.json"))) :
+             Dict{String,Float64}()
+         Dict("num_demands"        => 10000,
+              "type"               => "random",
+              "disttype"           => "uniform",
+              "deltaV_dist"        => 8000.0,
+              "time_dist"          => [50.0, 1825.0],
+              "service_times"      => [1.0, 5.0],
+              "num_satellites"     => 224,
+              "sat_values"         => mixed_vals,
+              "default_asset_value" => DEFAULT_ASSET_VALUE)
+     end,
      seed_fn        = (trial, lv) -> trial * 137,
      greedy_dv_fn   = (lv) -> parse(Float64, lv)),
 
@@ -157,7 +187,8 @@ sim = load_sim()
 # e.g. julia generate_sensitivity_demands.jl dvbudget
 #      julia generate_sensitivity_demands.jl size disttype
 # No args → run all sub-experiments
-filter_names = isempty(ARGS) ? nothing : Set(ARGS)
+_se_args     = filter(a -> !startswith(a, "--outdir="), ARGS)
+filter_names = isempty(_se_args) ? nothing : Set(_se_args)
 active_ses   = filter_names === nothing ? subexperiments :
                filter(se -> se.name in filter_names, subexperiments)
 isempty(active_ses) && error("No sub-experiments matched: $(ARGS). Valid names: $(join([s.name for s in subexperiments], ", "))")

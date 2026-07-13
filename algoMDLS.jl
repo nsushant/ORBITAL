@@ -16,7 +16,7 @@ const MU_MDLS = 3.986004418e5
 
 # operators to reduce the delta V of a schedule 
 
-function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.50, ag::Union{Nothing,AdaptiveGrid}=nothing)
+function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_pct=0.50, shift=15.0, ag::Union{Nothing,AdaptiveGrid}=nothing)
     # Tries two timing block moves per leg and applies the best:
     # C: shift arrivals[i:end]+departures[i:end] later (block — preserves no-wait invariant)
     # D: shift arrivals[1:i-1]+departures[1:i-1] earlier (block — preserves no-wait invariant)
@@ -54,7 +54,7 @@ function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_
                 (15.0, 15.0)
             end
         else
-            (15.0, 15.0)
+            (shift, shift)
         end
 
         orig_cost   = legs[n][1]
@@ -1487,7 +1487,7 @@ end
 
 function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab;
               nvehicles=20, time_limit=Inf, init_sol=nothing, init_unassigned=nothing,
-              dv_budget=5000.0)
+              dv_budget=5000.0, opt_times_shift=15.0, opt_times_top_pct=0.5)
 
     t_start = time()
     if isnothing(init_sol)
@@ -1503,11 +1503,17 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
                 _init_octree(dv0, us0, length(init_sol), 1))
 
     # ── ΔV operator pool (3 operators, one sampled randomly each iteration) ────
-    dv_op_names = ["opt_times", "destroy_repair", "shaw"]
+    # LNS operators (destroy_and_repair, shaw_removal_repair) excluded for fair comparison
+    # with population-based GAs — uncomment to restore full MDLS+LNS:
+    # dv_op_names = ["opt_times", "destroy_repair", "shaw"]
+    # dv_operators = [
+    #     (s, u) -> (opt_times_combined(s, demands, cost_table, mintof_table, sim_obj), u),
+    #     (s, u) -> destroy_and_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
+    #     (s, u) -> shaw_removal_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
+    # ]
+    dv_op_names = ["opt_times"]
     dv_operators = [
-        (s, u) -> (opt_times_combined(s, demands, cost_table, mintof_table, sim_obj), u),
-        (s, u) -> destroy_and_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
-        (s, u) -> shaw_removal_repair(s, demands, cost_table, mintof_table, min_dv_tab, sim_obj, u),
+        (s, u) -> (opt_times_combined(s, demands, cost_table, mintof_table, sim_obj; shift=opt_times_shift, top_pct=opt_times_top_pct), u),
     ]
 
     op_times     = zeros(3)   # [consolidate, create_veh, dv_op]

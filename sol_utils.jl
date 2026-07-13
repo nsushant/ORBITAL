@@ -227,7 +227,7 @@ function build_min_dv_table(cost_table, n_nodes)
 end
 
 const INFEASIBLE_LEG_COST = 1.0e6
-const COST_TABLE_PERIOD   = 400.0   # days — cost table time extent (used for long-horizon wrapping)
+const COST_TABLE_PERIOD   = 1825.0  # days — cost table time extent (5-year horizon)
 
 # For missions longer than COST_TABLE_PERIOD days, wrap departure epoch onto the cost table's
 # time range using modular arithmetic (J2 precession is approximately periodic over ~400 days).

@@ -1,0 +1,183 @@
+"""
+plot_pure_knee.py — Knee point box plots for pure-comparison experiments.
+
+Knee point = solution closest to ideal [0,0,0] in normalised objective space:
+  argmin sqrt(f1_norm² + f2_norm² + f3_norm²)
+
+One box per algorithm per scenario, showing knee point distance across trials.
+Also produces per-objective knee value box plots.
+
+Run: python plot_pure_knee.py
+"""
+
+import os, glob
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+RES_DIR = "outputs/pure_results"
+OUT_DIR = "outputs"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+SCENARIOS = {
+    "tight_normal":  "Scenario 1",
+    "loose_uniform": "Scenario 2",
+    "tight_low_dv":  "Scenario 3",
+    "loose_high_dv": "Scenario 4",
+}
+
+ALGOS = {
+    "mdls":       "MDLS",
+    "nsga3rk":    "NSGA-III",
+    "nsga3rk_ot": "NSGA-III-T",
+}
+
+COLOURS = {
+    "mdls":       "#1f77b4",
+    "nsga3rk":    "#d62728",
+    "nsga3rk_ot": "#2ca02c",
+}
+
+DV_FILTER = np.inf   # no filter — all solutions included
+FS        = 28
+FS_TICK   = 24
+
+# ---------------------------------------------------------------------------
+# Load data
+# ---------------------------------------------------------------------------
+
+records = []
+for scenario in SCENARIOS:
+    for algo in ALGOS:
+        pattern = os.path.join(RES_DIR, f"{algo}_{scenario}_*.csv")
+        for path in sorted(glob.glob(pattern)):
+            trial = int(os.path.basename(path).split("_")[-1].replace(".csv", ""))
+            df = pd.read_csv(path)
+            df = df[df["f1_dv"] < DV_FILTER]
+            if df.empty:
+                continue
+            df["scenario"] = scenario
+            df["algo"]     = algo
+            df["trial"]    = trial
+            records.append(df)
+
+if not records:
+    raise FileNotFoundError(f"No valid CSVs in {RES_DIR}")
+
+data = pd.concat(records, ignore_index=True)
+
+# ---------------------------------------------------------------------------
+# Normalise
+# ---------------------------------------------------------------------------
+
+REF_DV = data["f1_dv"].quantile(0.99)
+REF_F2 = data["f2_unrecovered_value"].quantile(0.99)
+REF_F3 = data["f3_vehicles"].quantile(0.99)
+
+data["f1_norm"] = data["f1_dv"]               / REF_DV
+data["f2_norm"] = data["f2_unrecovered_value"] / REF_F2
+data["f3_norm"] = data["f3_vehicles"]          / REF_F3
+
+print(f"Normalisation: dv={REF_DV:.0f}  f2={REF_F2:.3e}  f3={REF_F3:.0f}")
+
+# Use max-based reference so all solutions are within normalised space
+REF_DV = data["f1_norm"].max() * 1.1
+REF_F2 = data["f2_norm"].max() * 1.1
+REF_F3 = data["f3_norm"].max() * 1.1
+
+# ---------------------------------------------------------------------------
+# Compute knee point per (scenario, algo, trial)
+# ---------------------------------------------------------------------------
+
+knee_records = []
+for (scenario, algo, trial), grp in data.groupby(["scenario", "algo", "trial"]):
+    F = grp[["f1_norm", "f2_norm", "f3_norm"]].values
+    dists = np.sqrt(np.sum(F ** 2, axis=1))
+    best  = np.argmin(dists)
+    knee_records.append({
+        "scenario": scenario,
+        "algo":     algo,
+        "trial":    trial,
+        "knee_dist": dists[best],
+        "f1_knee":  F[best, 0],
+        "f2_knee":  F[best, 1],
+        "f3_knee":  F[best, 2],
+    })
+
+knee_df = pd.DataFrame(knee_records)
+knee_df["knee_dist"] = knee_df.groupby("scenario")["knee_dist"].transform(lambda x: x / x.max() if x.max() > 0 else x)
+
+print("\nMedian knee distance per scenario/algo:")
+print(knee_df.groupby(["scenario", "algo"])["knee_dist"].median().unstack().to_string())
+
+# ---------------------------------------------------------------------------
+# Box plots — knee distance, combined figure
+# ---------------------------------------------------------------------------
+
+algo_keys   = list(ALGOS.keys())
+algo_labels = [ALGOS[a] for a in algo_keys]
+n_scen      = len(SCENARIOS)
+
+fig, axes = plt.subplots(1, n_scen, figsize=(5 * n_scen, 5), sharey=True)
+
+for ax, (scenario, scenario_label) in zip(axes, SCENARIOS.items()):
+    sub = knee_df[knee_df["scenario"] == scenario]
+    box_data = [sub[sub["algo"] == a]["knee_dist"].values for a in algo_keys]
+    bp = ax.boxplot(box_data, patch_artist=True, widths=0.5,
+                    medianprops=dict(color="black", linewidth=2))
+    for patch, algo in zip(bp["boxes"], algo_keys):
+        patch.set_facecolor(COLOURS[algo])
+        patch.set_alpha(0.7)
+    ax.set_xticks(range(1, len(algo_keys) + 1))
+    ax.set_xticklabels(algo_labels, fontsize=FS_TICK, rotation=15, ha="right")
+    ax.set_title(scenario_label, fontsize=FS)
+    ax.tick_params(axis="y", labelsize=FS_TICK)
+    ax.grid(False)
+    if ax is axes[0]:
+        ax.set_ylabel("Knee point", fontsize=FS - 2)
+
+plt.tight_layout()
+out = os.path.join(OUT_DIR, "pure_knee_combined.pdf")
+fig.savefig(out, bbox_inches="tight")
+plt.close(fig)
+print(f"\nsaved {out}")
+
+# ---------------------------------------------------------------------------
+# Per-objective knee value box plots
+# ---------------------------------------------------------------------------
+
+OBJ_COLS = [
+    ("f1_knee", "f₁  ΔV (normalised)"),
+    ("f2_knee", "f₂  Lost value (normalised)"),
+    ("f3_knee", "f₃  Vehicles (normalised)"),
+]
+
+for col, ylabel in OBJ_COLS:
+    fig, axes = plt.subplots(1, n_scen, figsize=(5 * n_scen, 5), sharey=True)
+    for ax, (scenario, scenario_label) in zip(axes, SCENARIOS.items()):
+        sub = knee_df[knee_df["scenario"] == scenario]
+        box_data = [sub[sub["algo"] == a][col].values for a in algo_keys]
+        bp = ax.boxplot(box_data, patch_artist=True, widths=0.5,
+                        medianprops=dict(color="black", linewidth=2))
+        for patch, algo in zip(bp["boxes"], algo_keys):
+            patch.set_facecolor(COLOURS[algo])
+            patch.set_alpha(0.7)
+        ax.set_xticks(range(1, len(algo_keys) + 1))
+        ax.set_xticklabels(algo_labels, fontsize=FS_TICK, rotation=15, ha="right")
+        ax.set_title(scenario_label, fontsize=FS)
+        ax.tick_params(axis="y", labelsize=FS_TICK)
+        ax.grid(False)
+        if ax is axes[0]:
+            ax.set_ylabel(ylabel, fontsize=FS - 2)
+    plt.tight_layout()
+    tag = col.replace("_knee", "")
+    out = os.path.join(OUT_DIR, f"pure_knee_{tag}_combined.pdf")
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"saved {out}")
