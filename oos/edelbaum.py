@@ -351,7 +351,14 @@ def transfer_cost(state1, state2, tofs, d_raans=EMPTY, n_scan=180, n_growth=48,
             continue
         gap = d_raans[k] if per_entry else default_raan
         lo_k, hi_k = lo[k], hi[k]
-        while hi_k - lo_k > growth_rtol * hi_k:
+        # growth_rtol <= 0 skips refinement, leaving the ladder to set the
+        # resolution. The iteration cap is a guard, not a tuning knob: once the
+        # midpoint rounds to an endpoint the interval stops shrinking, and a
+        # tolerance of zero would otherwise spin forever.
+        refinements = 0
+        while (growth_rtol > 0.0 and hi_k - lo_k > growth_rtol * hi_k
+               and refinements < 200):
+            refinements += 1
             mid = 0.5 * (lo_k + hi_k)
             bundles = ring_bundles(mid, x1, y1, x2, y2, state1, state2, n_scan)
             if _closes_from_bundles(bundles, mid, x1, y1, x2, y2, state1, state2,
