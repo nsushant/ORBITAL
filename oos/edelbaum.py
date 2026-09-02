@@ -45,6 +45,9 @@ A, INCL, RAAN, MASS, ISP, THRUST = 0, 1, 2, 3, 4, 5
 
 _GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(16)
 
+# Sentinel for "no per-entry RAAN gaps given"; numba needs a concrete array type.
+EMPTY = np.empty(0)
+
 
 @njit(cache=True)
 def to_velocity_plane(a, incl):
@@ -180,28 +183,72 @@ def drift_orbit_residual(xd, yd, state1, state2, tof, d_raan):
 
 
 @njit(cache=True)
-def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
-    """True when some drift orbit on this ring closes RAAN exactly.
+def ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan):
+    """Arc quantities for each sampled drift orbit on a ring.
 
-    The residual is continuous in the ring parameter except where it steps by
-    2*pi, so a sign change across a small step brackets a genuine root. The
-    bracket is then bisected, which drives the residual to zero rather than
-    testing sampled points against a tolerance — the difference between finding
-    the transfers that exist and finding the ones a sample happens to land on.
+    None of this depends on the time of flight - only the coast between the two
+    arcs does - so a ring is evaluated once and then tested against every time
+    of flight. Columns: total delta-V, first-arc duration, both-arc duration,
+    RAAN accrued while thrusting, and the drift orbit's nodal rate.
+    """
+    out = np.empty((n_scan + 1, 5))
+    xs1, ys1 = to_velocity_plane(state1[A], state1[INCL])
+    xs2, ys2 = to_velocity_plane(state2[A], state2[INCL])
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
+
+    for k in range(n_scan + 1):
+        t = t_max * k / n_scan
+        xd, yd = ring_point(growth, x1, y1, x2, y2, t)
+        a_d, incl_d = from_velocity_plane(xd, yd)
+
+        dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
+                                    state1[MASS], state1[ISP], state1[THRUST])
+        raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
+                                 state1[ISP], state1[THRUST], xs1, ys1, xd, yd, dv1)
+        dv2, dt2, _ = arc_cost(a_d, incl_d, state2[A], state2[INCL],
+                               mass_d, state1[ISP], state1[THRUST])
+        raan2 = _raan_during_arc(a_d, incl_d, mass_d, state1[ISP], state1[THRUST],
+                                 xd, yd, xs2, ys2, dv2)
+
+        out[k, 0] = dv1 + dv2
+        out[k, 1] = dt1
+        out[k, 2] = dt1 + dt2
+        out[k, 3] = raan1 + raan2
+        out[k, 4] = j2_raan_rate(a_d, incl_d)
+    return out
+
+
+@njit(cache=True)
+def _residual_from_bundle(bundles, k, tof, d_raan):
+    """Closure residual of sampled drift orbit k at this time of flight."""
+    if tof - bundles[k, 1] <= 0.0:      # the first arc alone overruns the horizon
+        return np.nan
+    t_coast = tof - bundles[k, 2]
+    if t_coast < 0.0:
+        return np.nan
+    return wrap_pi(bundles[k, 3] + bundles[k, 4] * t_coast - d_raan)
+
+
+@njit(cache=True)
+def _closes_from_bundles(bundles, growth, x1, y1, x2, y2, state1, state2,
+                         tof, d_raan, n_scan):
+    """Does some drift orbit on this ring close RAAN exactly at this horizon?
+
+    Sign changes of the residual bracket a root, except where the residual steps
+    by 2*pi, which is the wrap rather than a crossing. Brackets are bisected on
+    the ring parameter, so closure is solved for rather than tested against a
+    tolerance.
     """
     t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
     prev_r = np.nan
     prev_t = 0.0
     for k in range(n_scan + 1):
         t = t_max * k / n_scan
-        px, py = ring_point(growth, x1, y1, x2, y2, t)
-        r, _ = drift_orbit_residual(px, py, state1, state2, tof, d_raan)
+        r = _residual_from_bundle(bundles, k, tof, d_raan)
 
         if not np.isnan(r) and not np.isnan(prev_r):
             if r == 0.0:
                 return True
-            # A sign change is a root only if the residual did not jump by 2*pi
-            # across the step; those jumps are the wrap, not a crossing.
             if prev_r * r < 0.0 and np.abs(r - prev_r) < np.pi:
                 lo_t, lo_r = prev_t, prev_r
                 hi_t = t
@@ -224,29 +271,47 @@ def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
 
 
 @njit(cache=True)
-def transfer_cost(state1, state2, tofs, n_scan=180, n_growth=48,
+def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+    """Single-horizon wrapper, kept for tests and for one-off queries."""
+    bundles = ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan)
+    return _closes_from_bundles(bundles, growth, x1, y1, x2, y2, state1, state2,
+                                tof, d_raan, n_scan)
+
+
+@njit(cache=True)
+def transfer_cost(state1, state2, tofs, d_raans=EMPTY, n_scan=180, n_growth=48,
                   max_growth=4096.0, growth_rtol=1e-3):
     """Minimum delta-V [km/s] for one orbit pair over several times of flight.
 
     Every point on a ring costs the same: the ring is an ellipse with the two
     endpoints as foci, and the two arcs are the distances from the point to each
-    focus, so their sum is exactly 2*(c + growth) with c the half focal
-    separation. The transfer delta-V therefore depends only on which ring the
-    drift orbit lies on, and the search reduces to finding the *smallest* ring
-    carrying a drift orbit that closes RAAN — which is what Section 3.2.4
-    describes. The chord (growth = 0) is the direct Edelbaum transfer.
+    focus, so their sum is exactly 2*(c + growth). The transfer delta-V depends
+    only on which ring the drift orbit lies on, so the search is for the
+    *smallest* ring carrying a drift orbit that closes RAAN - the method
+    Section 3.2.4 describes. The chord (growth = 0) is the direct transfer.
 
     Feasibility is not monotone in growth: too small a ring cannot buy enough
-    nodal drift, and too large a one spends so long thrusting that the arcs no
-    longer fit inside the horizon. So the ladder is scanned outward for the
-    first ring that closes, then bisected against the last one that did not.
+    nodal drift, too large a one spends so long thrusting that the arcs no
+    longer fit the horizon. So the ladder is scanned outward for the first ring
+    that closes, then bisected against the last that did not.
+
+    Each ring is evaluated once and tested against every time of flight, since
+    the arcs do not depend on the horizon.
 
     `tofs` in seconds. States are [a, incl, raan, mass, isp, thrust].
+    `d_raans`, if given, is the required RAAN change for each entry of `tofs`;
+    it defaults to `state2[RAAN] - state1[RAAN]` for all of them. A cost table
+    needs one entry per (departure epoch, arrival epoch), and the nodes of both
+    objects have drifted by different amounts at each departure, so the required
+    RAAN change differs entry by entry while the orbits do not. The ring bundles
+    depend only on the orbits, so passing every entry for an object pair in one
+    call shares that work across all of them.
     NaN where no drift orbit closes RAAN within the time of flight.
     """
     n_tofs = tofs.shape[0]
     best = np.full(n_tofs, np.nan)
-    d_raan = state2[RAAN] - state1[RAAN]
+    per_entry = d_raans.shape[0] == n_tofs
+    default_raan = state2[RAAN] - state1[RAAN]
 
     x1, y1 = to_velocity_plane(state1[A], state1[INCL])
     x2, y2 = to_velocity_plane(state2[A], state2[INCL])
@@ -254,29 +319,47 @@ def transfer_cost(state1, state2, tofs, n_scan=180, n_growth=48,
 
     ladder = 10.0 ** np.linspace(-2.0, np.log10(max_growth), n_growth)
 
+    # Largest growth known not to close, and smallest known to close, per horizon.
+    lo = np.zeros(n_tofs)
+    hi = np.full(n_tofs, -1.0)
+    resolved = np.zeros(n_tofs, dtype=np.bool_)
+
+    chord = ring_bundles(0.0, x1, y1, x2, y2, state1, state2, n_scan)
     for k in range(n_tofs):
-        tof = tofs[k]
-        if ring_closes(0.0, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+        gap = d_raans[k] if per_entry else default_raan
+        if _closes_from_bundles(chord, 0.0, x1, y1, x2, y2, state1, state2,
+                                tofs[k], gap, n_scan):
             best[k] = 2.0 * half_separation      # the direct transfer already closes
-            continue
+            resolved[k] = True
 
-        lo = 0.0                                  # largest growth known not to close
-        hi = -1.0                                 # smallest known to close
-        for g in range(ladder.shape[0]):
-            if ring_closes(ladder[g], x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
-                hi = ladder[g]
-                break
-            lo = ladder[g]
-        if hi < 0.0:
-            continue                              # nothing on the ladder closes
-
-        while hi - lo > growth_rtol * hi:
-            mid = 0.5 * (lo + hi)
-            if ring_closes(mid, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
-                hi = mid
+    for g in range(ladder.shape[0]):
+        if np.all(resolved):
+            break
+        bundles = ring_bundles(ladder[g], x1, y1, x2, y2, state1, state2, n_scan)
+        for k in range(n_tofs):
+            if resolved[k] or hi[k] > 0.0:
+                continue
+            gap = d_raans[k] if per_entry else default_raan
+            if _closes_from_bundles(bundles, ladder[g], x1, y1, x2, y2, state1,
+                                    state2, tofs[k], gap, n_scan):
+                hi[k] = ladder[g]
             else:
-                lo = mid
-        best[k] = 2.0 * (half_separation + hi)
+                lo[k] = ladder[g]
+
+    for k in range(n_tofs):
+        if resolved[k] or hi[k] < 0.0:
+            continue
+        gap = d_raans[k] if per_entry else default_raan
+        lo_k, hi_k = lo[k], hi[k]
+        while hi_k - lo_k > growth_rtol * hi_k:
+            mid = 0.5 * (lo_k + hi_k)
+            bundles = ring_bundles(mid, x1, y1, x2, y2, state1, state2, n_scan)
+            if _closes_from_bundles(bundles, mid, x1, y1, x2, y2, state1, state2,
+                                    tofs[k], gap, n_scan):
+                hi_k = mid
+            else:
+                lo_k = mid
+        best[k] = 2.0 * (half_separation + hi_k)
 
     return best
 

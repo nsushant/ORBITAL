@@ -195,6 +195,34 @@ def test_search_finds_the_transfers_that_exist():
     return exists, found, rate
 
 
+def test_per_entry_raan_matches_one_at_a_time():
+    """Batching a pair's whole (departure, arrival) grid must change nothing.
+
+    A cost table needs one entry per departure and arrival epoch, each with its
+    own required RAAN change, and the ring bundles are shared across all of
+    them. That sharing is only sound if the batched answer is identical to
+    solving each entry on its own.
+    """
+    mass, isp, thrust = 335.0, 2800.0, 1e-4
+    rng = np.random.default_rng(3)
+    a0, i0 = 6378.137 + 550.0, math.radians(53.0)
+    af, i_f = 6378.137 + 600.0, math.radians(53.4)
+    s1 = np.array([a0, i0, 0.0, mass, isp, thrust])
+
+    tofs = np.array([60.0, 120.0, 180.0, 250.0, 365.0]) * 86400.0
+    gaps = rng.uniform(-math.pi, math.pi, size=tofs.shape[0])
+
+    batched = eb.transfer_cost(s1, np.array([af, i_f, 0.0, mass, isp, thrust]), tofs, gaps)
+    for k, (gap, tof) in enumerate(zip(gaps, tofs)):
+        alone = eb.transfer_cost(s1, np.array([af, i_f, gap, mass, isp, thrust]),
+                                 np.array([tof]))[0]
+        if np.isnan(alone):
+            assert np.isnan(batched[k])
+        else:
+            assert abs(batched[k] - alone) <= 1e-15 * max(1.0, abs(alone))
+    return int(np.sum(~np.isnan(batched)))
+
+
 if __name__ == "__main__":
     print(f"closed-form Edelbaum agreement       worst rel. err = {test_arc_matches_closed_form_edelbaum():.2e}")
     print(f"coplanar arc = |V2 - V1|             abs. err       = {test_coplanar_arc_is_velocity_difference():.2e}")
@@ -204,6 +232,7 @@ if __name__ == "__main__":
     print(f"RAAN quadrature vs fine trapezoid    rel. err       = {test_raan_quadrature_against_fine_integration():.2e}")
     print(f"ring delta-V identity                worst dev      = {test_ring_delta_v_identity():.2e} km/s")
     print(f"returned costs close RAAN            checked        = {test_returned_cost_corresponds_to_a_closing_drift_orbit()} solutions")
+    print(f"batched RAAN grid == one at a time    feasible       = {test_per_entry_raan_matches_one_at_a_time()}")
     e, f, r = test_search_finds_the_transfers_that_exist()
     print(f"transfers found vs transfers existing = {f}/{e}  ({100*r:.1f} %)")
     print("\nall checks passed")
