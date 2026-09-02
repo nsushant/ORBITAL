@@ -48,22 +48,41 @@ _GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(16)
 # Sentinel for "no per-entry RAAN gaps given"; numba needs a concrete array type.
 EMPTY = np.empty(0)
 
-# A drift orbit has to be an orbit. In the velocity plane a point at radius v
-# maps to a = MU / v^2, so v -> 0 maps to a -> infinity and the origin itself is
-# a division by zero; rings of large growth sweep straight through it. These
-# bounds reject such points where drift orbits are evaluated, in `ring_bundles`
-# and `drift_orbit_residual`. `from_velocity_plane` itself stays a pure
-# coordinate map, so the geometric ring identity still holds everywhere.
-# The bounds bite only on rings far outside anything affordable: delta-V on a
-# ring is 2*(c + growth), so a growth of even 1 km/s already costs 2 km/s, four
-# times the servicer's whole budget.
+# A drift orbit has to be an orbit. The growth ladder is walked outward until a
+# ring closes, so an entry that never closes walks it all the way to the top,
+# and the far rungs are not physical. Two distinct failures live out there, at
+# two different growths, and both are rejected by bounding the drift orbit:
+#
+#   growth ~ |centre|   The ring is an ellipse with the two velocity-plane
+#                       endpoints as foci, centred at their midpoint, which sits
+#                       about 7.6 km/s from the origin for every pair in this
+#                       population. When the semi-major axis c + growth reaches
+#                       that distance the ring passes through the origin, where
+#                       a = MU / v^2 diverges -- measured, 6e30 km.
+#
+#   growth >> |centre|  The ring becomes a huge near-circle: at the old ladder
+#                       top of 4096 km/s every point sits at |v| ~ 4096 km/s, so
+#                       the drift orbit has a = 24 m and the arc costs ~4000
+#                       km/s. The rocket equation then drives the servicer's
+#                       mass to 1e-163 on the first arc, and the quadrature over
+#                       the second multiplies it by another exp(-379), which
+#                       underflows to exactly zero. Dividing thrust by that mass
+#                       to get acceleration raises ZeroDivisionError.
+#
+# Neither has anything to do with the pair's geometry -- what triggers them is
+# an entry that never closes, whatever its inclination or altitude separation.
+# In a serial call the second surfaces as an exception; inside the parallel
+# build it surfaced as a silently all-NaN table, which is the worse symptom.
+#
+# The bounds cost nothing real: delta-V on a ring is 2*(c + growth), so a growth
+# of even 1 km/s already costs 2 km/s, four times the servicer's whole budget.
 A_DRIFT_MIN = R_E + 150.0     # km
 A_DRIFT_MAX = 10.0 * R_E      # km
 
-# Ceiling on the ring search. Circular-orbit speeds in this problem are about
-# 7.6 km/s, so a growth of 8 km/s already reaches the origin of the velocity
-# plane; nothing beyond it is an orbit. It is also 32 times the largest growth
-# the servicer could pay for.
+# Ceiling on the ring search. Circular-orbit speeds here are about 7.6 km/s, so
+# a growth of 8 km/s already carries the ring past the origin and out to drift
+# orbits inside the Earth. It is also 32 times the largest growth the servicer
+# could pay for, so nothing reachable is lost.
 MAX_GROWTH = 8.0              # km/s
 
 
