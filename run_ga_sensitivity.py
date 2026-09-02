@@ -6,7 +6,7 @@ CLI:
                                [--demand-dir DIR] [--dv-budget FLOAT] [--n-eval INT]
 
 algo       : nsga3rk | nsga3rk_ot
-param_name : sbx_eta | pm_eta | crossover_prob | shift | top_pct
+param_name : sbx_eta | pm_eta | crossover_prob | shift | top_pct | n_ref_dirs
 param_level: float value
 
 Writes dataset /{algo}/{param_name}/{level_str}/trial_{nn} → (n_solutions × 3)
@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("key",         help="demand file key, e.g. tight_low_dv")
 parser.add_argument("trial",       type=int)
 parser.add_argument("algo",        choices=["nsga3rk", "nsga3rk_ot"])
-parser.add_argument("param_name",  choices=["sbx_eta", "pm_eta", "crossover_prob", "shift", "top_pct"])
+parser.add_argument("param_name",  choices=["sbx_eta", "pm_eta", "crossover_prob", "shift", "top_pct", "n_ref_dirs"])
 parser.add_argument("param_level", type=float)
 parser.add_argument("h5_file",     help="path to shared HDF5 output file")
 parser.add_argument("--demand-dir",  default="outputs/exp_demands")
@@ -41,11 +41,12 @@ trial_str = f"{trial:02d}"
 # Nominal parameters (only the swept one is overridden)
 # ---------------------------------------------------------------------------
 
-sbx_eta       = 20
-pm_eta        = 20
+sbx_eta        = 20
+pm_eta         = 20
 crossover_prob = 0.9
-ot_shift      = 15.0
-ot_top_pct    = 0.5
+ot_shift       = 15.0
+ot_top_pct     = 0.5
+n_partitions   = 12
 
 if args.param_name == "sbx_eta":
     sbx_eta = int(args.param_level)
@@ -57,6 +58,8 @@ elif args.param_name == "shift":
     ot_shift = args.param_level
 elif args.param_name == "top_pct":
     ot_top_pct = args.param_level
+elif args.param_name == "n_ref_dirs":
+    n_partitions = int(args.param_level)
 
 # ---------------------------------------------------------------------------
 # Imports
@@ -126,7 +129,7 @@ prob = ProbClass(
     dv_budget     = args.dv_budget,
 )
 
-ref_dirs = get_reference_directions("das-dennis", n_dim=3, n_partitions=12)
+ref_dirs = get_reference_directions("das-dennis", n_dim=3, n_partitions=n_partitions)
 if args.algo == "nsga3rk_ot":
     sampling = GreedySamplingRK2(greedy_x_rk) if greedy_x_rk is not None else None
 else:

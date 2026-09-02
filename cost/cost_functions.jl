@@ -3,7 +3,9 @@
 # Both read trajectory data from sim.traj_file (HDF5) at the nearest hourly index.
 
 include(joinpath(@__DIR__, "lu_transfer.jl"))
+include(joinpath(@__DIR__, "lu_continuous.jl"))
 include(joinpath(@__DIR__, "ht_transfer.jl"))
+include(joinpath(@__DIR__, "edelbaum_transfer.jl"))
 
 # ── Nearest index lookup ───────────────────────────────────────────────────────
 @inline function nearest_idx(times::Vector{Float64}, t_sec::Float64) :: Int
@@ -20,7 +22,12 @@ to the arrival epoch to get the true rendezvous time.
 Returns (1e8, 0.0) on failure.
 """
 function LT_cost_calculation(sim, satinit::Int, satarr::Int,
-                              dep_days::Float64, arr_days::Float64) :: Tuple{Float64,Float64}
+                              dep_days::Float64, arr_days::Float64;
+                              continuous::Bool=false, fmax::Float64=3.5e-6,
+                              oracle::Symbol=:lu,
+                              m_servicer::Float64=300.0,
+                              Isp::Float64=2800.0,
+                              T::Union{Float64,Nothing}=nothing) :: Tuple{Float64,Float64}
 
     tof_days = arr_days - dep_days
     tof_days <= 0.0 && return 1e8, 0.0
@@ -45,8 +52,10 @@ function LT_cost_calculation(sim, satinit::Int, satarr::Int,
     nu_i_at_arr = mod(nu_i + n_i * tof_days * 86400.0, 2π)
 
     # ── Same-plane shortcut: skip full LT solve, only phasing ΔV needed ───────
-    same_plane = abs(inc_i - inc_j)  < 0.01 &&   # ~0.57°
-                 abs(raan_i - raan_j) < 0.01
+    # wrap_pi: RAAN comes from atan2 in (-π, π], so a raw difference would miss the
+    # shortcut for co-planar pairs straddling the ±180° seam.
+    same_plane = abs(inc_i - inc_j)           < 0.01 &&   # ~0.57°
+                 abs(wrap_pi(raan_i - raan_j)) < 0.01
 
     if same_plane
         dv_phase, Tp_s = phasing(a_j, nu_i_at_arr, nu_j)
@@ -55,7 +64,14 @@ function LT_cost_calculation(sim, satinit::Int, satarr::Int,
 
     # ── Full LT transfer ΔV ───────────────────────────────────────────────────
     result = try
-        calculate_transfer_cost(a_i, inc_i, raan_i, a_j, inc_j, raan_j, tof_days)
+        if oracle === :edelbaum
+            T_force = T === nothing ? m_servicer * fmax : T
+            edelbaum_transfer_cost(a_i, inc_i, raan_i, a_j, inc_j, raan_j, tof_days;
+                                   m=m_servicer, Isp=Isp, T=T_force, fmax=fmax)
+        else
+            calculate_transfer_cost(a_i, inc_i, raan_i, a_j, inc_j, raan_j, tof_days;
+                                    continuous=continuous, fmax=fmax)
+        end
     catch
         return 1e8, 0.0
     end

@@ -16,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker
 import moocore
+from bcr_model import objectives3
 
 H5_FILE  = "outputs/sensitivity_oat.h5"
 RES_DIR  = "outputs/pure_results"   # for computing normalisation factors
@@ -42,14 +43,18 @@ PARAMS = {
         ("sbx_eta",        "SBX η",              [5.0, 10.0, 20.0, 30.0]),
         ("pm_eta",         "PM η",               [5.0, 10.0, 20.0, 30.0]),
         ("crossover_prob", "Crossover prob",      [0.5, 0.7, 0.9, 1.0]),
+        ("n_ref_dirs",     "No. ref. directions", [4.0, 8.0, 12.0, 16.0]),
     ],
     "nsga3rk_ot": [
         ("sbx_eta",        "SBX η",              [5.0, 10.0, 20.0, 30.0]),
         ("pm_eta",         "PM η",               [5.0, 10.0, 20.0, 30.0]),
-        ("shift",          "Timing shift (days)", [5.0, 15.0, 30.0, 60.0]),
-        ("top_pct",        "Top-leg fraction",    [0.25, 0.5, 0.75, 1.0]),
+        ("crossover_prob", "Crossover prob",      [0.5, 0.7, 0.9, 1.0]),
+        ("n_ref_dirs",     "No. ref. directions", [4.0, 8.0, 12.0, 16.0]),
     ],
 }
+
+# das-dennis partition number → actual ref dir count for 3 objectives: C(p+2, 2)
+_NREF_LABELS = {4: "15", 8: "45", 12: "91", 16: "153", 20: "231"}
 
 NOMINAL = {
     "shift":          15.0,
@@ -57,6 +62,7 @@ NOMINAL = {
     "sbx_eta":        20.0,
     "pm_eta":         20.0,
     "crossover_prob": 0.9,
+    "n_ref_dirs":     12.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -87,6 +93,35 @@ print(f"Normalisation: dv={REF_DV:.0f}  f2={REF_F2:.3e}  f3={REF_F3:.0f}")
 print(f"HV ref point (normalised): {REF_POINT}")
 
 # ---------------------------------------------------------------------------
+# Compute hv_max and knee_max from numerical experiment results for tight_low_dv
+# (same normalisation as plot_pure_hv.py / plot_pure_knee.py)
+# ---------------------------------------------------------------------------
+
+OAT_SCENARIO = "tight_low_dv"
+_exp_hvs = []
+_exp_knees = []
+for algo in ALGOS:
+    for path in glob.glob(os.path.join(RES_DIR, f"{algo}_{OAT_SCENARIO}_*.csv")):
+        df = pd.read_csv(path)
+        if df.empty:
+            continue
+        Fn = df[["f1_dv", "f2_unrecovered_value", "f3_vehicles"]].values.copy().astype(float)
+        Fn[:, 0] /= REF_DV
+        Fn[:, 1] /= REF_F2
+        Fn[:, 2] /= REF_F3
+        # HV
+        Fn_hv = Fn[np.all(Fn < REF_POINT, axis=1)]
+        if len(Fn_hv) > 0:
+            _exp_hvs.append(moocore.hypervolume(Fn_hv, ref=REF_POINT))
+        # Knee
+        d = np.sqrt(np.sum(Fn ** 2, axis=1))
+        _exp_knees.append(d.min())
+
+EXP_HV_MAX   = max(_exp_hvs)   if _exp_hvs   else 1.0
+EXP_KNEE_MAX = max(_exp_knees) if _exp_knees else 1.0
+print(f"Experiment norms for {OAT_SCENARIO}: hv_max={EXP_HV_MAX:.3e}  knee_max={EXP_KNEE_MAX:.3e}")
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -101,10 +136,7 @@ def load_front(fid, algo, param, level):
     grp = fid[path]
     fronts = []
     for trial_key in sorted(grp.keys()):
-        data = grp[trial_key][:]
-        if data.ndim == 2 and data.shape[0] == 3 and data.shape[1] != 3:
-            data = data.T  # Julia HDF5 transpose
-        fronts.append(data)
+        fronts.append(objectives3(grp[trial_key][:]))
     return fronts
 
 
@@ -148,16 +180,8 @@ if not os.path.exists(H5_FILE):
     raise FileNotFoundError(f"{H5_FILE} not found — run run_sensitivity_oat.sh first")
 
 with h5py.File(H5_FILE, "r") as fid:
-    # Global HV max across ALL algorithms (mirrors per-scenario norm in plot_pure_hv.py)
-    global_hvs = []
-    for algo in ALGOS:
-        if algo not in fid:
-            continue
-        for param, _, levels in PARAMS[algo]:
-            for level in levels:
-                global_hvs.extend(compute_hvs(load_front(fid, algo, param, level)))
-    hv_max = max(global_hvs) if global_hvs else 1.0
-    print(f"Global HV max (for normalisation): {hv_max:.3e}")
+    hv_max = EXP_HV_MAX
+    print(f"HV normalisation (from {OAT_SCENARIO} experiments): {hv_max:.3e}")
 
     for algo, algo_label in ALGOS.items():
         if algo not in fid:
@@ -178,7 +202,10 @@ with h5py.File(H5_FILE, "r") as fid:
             for level in levels:
                 hvs = [h / hv_max for h in compute_hvs(load_front(fid, algo, param, level))]
                 data_per_level.append(hvs if hvs else [0.0])
-                label = str(int(level)) if level == int(level) else str(level)
+                if param == "n_ref_dirs":
+                    label = _NREF_LABELS.get(int(level), str(int(level)))
+                else:
+                    label = str(int(level)) if level == int(level) else str(level)
                 nom   = NOMINAL.get(param)
                 labels.append(f"{label}*" if nom is not None and abs(level - nom) < 1e-9 else label)
 
@@ -201,7 +228,7 @@ with h5py.File(H5_FILE, "r") as fid:
                 ax.set_ylabel("Hypervolume", fontsize=22)
             
             ax.tick_params(axis="y", labelsize=22)
-            ax.set_ylim(0, 1.05)
+            ax.set_ylim(0, 1.15)
             ax.grid(axis="y", linestyle="--", alpha=0.4)
 
         fig.suptitle(f"{algo_label} — OAT sensitivity", fontsize=22, y=1.02)
@@ -215,15 +242,8 @@ with h5py.File(H5_FILE, "r") as fid:
     # -------------------------------------------------------------------
     # Knee-point distance plots
     # -------------------------------------------------------------------
-    global_knees = []
-    for algo in ALGOS:
-        if algo not in fid:
-            continue
-        for param, _, levels in PARAMS[algo]:
-            for level in levels:
-                global_knees.extend(compute_knee_dists(load_front(fid, algo, param, level)))
-    knee_max = max(global_knees) if global_knees else 1.0
-    print(f"Global knee-dist max (for normalisation): {knee_max:.3e}")
+    knee_max = EXP_KNEE_MAX
+    print(f"Knee normalisation (from {OAT_SCENARIO} experiments): {knee_max:.3e}")
 
     for algo, algo_label in ALGOS.items():
         if algo not in fid:
@@ -243,7 +263,10 @@ with h5py.File(H5_FILE, "r") as fid:
             for level in levels:
                 kds = [k / knee_max for k in compute_knee_dists(load_front(fid, algo, param, level))]
                 data_per_level.append(kds if kds else [0.0])
-                label = str(int(level)) if level == int(level) else str(level)
+                if param == "n_ref_dirs":
+                    label = _NREF_LABELS.get(int(level), str(int(level)))
+                else:
+                    label = str(int(level)) if level == int(level) else str(level)
                 nom   = NOMINAL.get(param)
                 labels.append(f"{label}*" if nom is not None and abs(level - nom) < 1e-9 else label)
 
@@ -266,7 +289,7 @@ with h5py.File(H5_FILE, "r") as fid:
                 ax.set_ylabel("Knee point", fontsize=22)
 
             ax.tick_params(axis="y", labelsize=22)
-            ax.set_ylim(0, 1.05)
+            ax.set_ylim(0, 1.15)
             ax.grid(axis="y", linestyle="--", alpha=0.4)
 
         fig.suptitle(f"{algo_label} — OAT sensitivity, knee distance", fontsize=22, y=1.02)

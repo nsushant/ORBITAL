@@ -31,8 +31,8 @@ parser.add_argument("--result-dir", default="outputs/exp_results",
                     help="directory to write result CSVs")
 parser.add_argument("--dv-budget", type=float, default=5000.0,
                     help="ΔV budget per vehicle per sortie [m/s]")
-parser.add_argument("--algos", nargs="+", default=["nsga3", "nsga3d"],
-                    help="Which algorithms to run (nsga3, nsga3d, moead, pso)")
+parser.add_argument("--algos", nargs="+", default=["nsga3rk", "nsga3rk_ot"],
+                    help="Which algorithms to run (nsga3rk, nsga3rk_ot)")
 parser.add_argument("--n-eval", type=int, default=10_000,
                     help="Total function evaluations budget per algorithm")
 parser.add_argument("--h5-file", default=None,
@@ -48,17 +48,10 @@ trial_str = f"{trial:02d}"
 # ---------------------------------------------------------------------------
 
 from loaders import load_sim_name_map, load_demands, load_cost_table_jld2, load_min_tof_table
-from pymoo_stuff import (OOSProblem, OOSRepair, OOSCrossover, OOSMutation,
-                         MOPSO_CD_Repair, OOSProblemDecoder,
-                         OOSCrossoverDecoder, OOSMutationDecoder, OOSProblemRK,
-                         OOSProblemRK_OT)
-from greedy_init import (GreedySampling, GreedySamplingDecoder, GreedySamplingRK,
-                         GreedySamplingRK2, load_greedy_from_json,
-                         load_greedy_2N_from_json, load_greedy_RK_from_json)
+from pymoo_stuff import OOSProblemRK, OOSProblemRK_OT
+from greedy_init import GreedySamplingRK, GreedySamplingRK2, load_greedy_RK_from_json
 
 from pymoo.algorithms.moo.nsga3 import NSGA3
-from pymoo.algorithms.moo.moead import MOEAD
-from pymoo.decomposition.pbi import PBI
 from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
@@ -97,33 +90,12 @@ maxV     = 25
 
 print(f"Demands loaded: {Ndems} demands")
 
-problem = OOSProblem(
-    Ndems         = Ndems,
-    maxV          = maxV,
-    deadlines     = d["demand_deadlines"],
-    service_times = d["service_times"],
-    asset_values  = d.get("asset_values", None),
-    sat_ids       = sat_ids,
-    depot_id      = depot_id,
-    cost_table    = ct,
-    dep_grid      = ct_meta["dep_grid"],
-    arr_grid      = ct_meta["arr_grid"],
-    min_tof_table = min_tof_table,
-    refuel_time   = REFUEL_TIME,
-    dv_budget     = args.dv_budget,
-)
-
-# Greedy warm start (4N for NSGA-III, 2N for NSGA-III-D)
+# Greedy warm start
 if os.path.exists(greedy_path):
-    greedy_x    = load_greedy_from_json(greedy_path, Ndems)
-    greedy_x_2N = load_greedy_2N_from_json(greedy_path, Ndems)
     greedy_x_rk = load_greedy_RK_from_json(greedy_path, Ndems)
-    n_served = int((greedy_x[0:Ndems] > 0).sum())
-    print(f"Greedy loaded: {n_served} served, {Ndems - n_served} unserved")
+    print(f"Greedy loaded")
 else:
     print(f"WARNING: greedy file not found ({greedy_path}), using random init")
-    greedy_x    = None
-    greedy_x_2N = None
     greedy_x_rk = None
 
 # ---------------------------------------------------------------------------
@@ -226,64 +198,7 @@ class ProgressCallback(Callback):
 # ---------------------------------------------------------------------------
 
 import time
-ref_dirs       = get_reference_directions("das-dennis", n_dim=3, n_partitions=12)  # 91 vectors
-ref_dirs_moead = get_reference_directions("das-dennis", n_dim=3, n_partitions=15)  # 136 vectors
-
-# ---------------------------------------------------------------------------
-# Run NSGA-III
-# ---------------------------------------------------------------------------
-
-if "nsga3" in args.algos:
-    print("\n--- NSGA-III ---")
-    sampling_nsga3 = GreedySampling(greedy_x) if greedy_x is not None else None
-    algo_nsga3 = NSGA3(
-        ref_dirs  = ref_dirs,
-        pop_size  = len(ref_dirs),
-        sampling  = sampling_nsga3,
-        crossover = OOSCrossover(eta=20),
-        mutation  = OOSMutation(eta=20),
-        repair    = OOSRepair(stochastic=True),
-    )
-    t0 = time.time()
-    res_nsga3 = minimize(problem, algo_nsga3, termination=("n_eval", args.n_eval),
-                         seed=trial, verbose=False, callback=ProgressCallback("nsga3"))
-    print(f"  done in {time.time()-t0:.1f}s")
-    save_front(res_nsga3, "nsga3")
-
-# ---------------------------------------------------------------------------
-# Run NSGA-III-D (decoder-based, 2N encoding, no repair)
-# ---------------------------------------------------------------------------
-
-if "nsga3d" in args.algos:
-    print("\n--- NSGA-III-D (decoder) ---")
-    problem_d = OOSProblemDecoder(
-        Ndems         = Ndems,
-        maxV          = maxV,
-        deadlines     = d["demand_deadlines"],
-        service_times = d["service_times"],
-        asset_values  = d.get("asset_values", None),
-        sat_ids       = sat_ids,
-        depot_id      = depot_id,
-        cost_table    = ct,
-        dep_grid      = ct_meta["dep_grid"],
-        arr_grid      = ct_meta["arr_grid"],
-        min_tof_table = min_tof_table,
-        refuel_time   = REFUEL_TIME,
-        dv_budget     = args.dv_budget,
-    )
-    sampling_nsga3d = GreedySamplingDecoder(greedy_x_2N) if greedy_x_2N is not None else None
-    algo_nsga3d = NSGA3(
-        ref_dirs  = ref_dirs,
-        pop_size  = len(ref_dirs),
-        sampling  = sampling_nsga3d,
-        crossover = OOSCrossoverDecoder(eta=20),
-        mutation  = OOSMutationDecoder(eta=20),
-    )
-    t0 = time.time()
-    res_nsga3d = minimize(problem_d, algo_nsga3d, termination=("n_eval", args.n_eval),
-                          seed=trial, verbose=False, callback=ProgressCallback("nsga3d"))
-    print(f"  done in {time.time()-t0:.1f}s")
-    save_front(res_nsga3d, "nsga3d", problem=problem_d)
+ref_dirs = get_reference_directions("das-dennis", n_dim=3, n_partitions=12)  # 91 vectors
 
 # ---------------------------------------------------------------------------
 # Run NSGA-III-RK (random-keys encoding, no repair, standard SBX+PM)
@@ -358,47 +273,5 @@ if "nsga3rk_ot" in args.algos:
                               seed=trial, verbose=False, callback=ProgressCallback("nsga3rk_ot"))
     print(f"  done in {time.time()-t0:.1f}s")
     save_front(res_nsga3rk_ot, "nsga3rk_ot", problem=problem_rk_ot)
-
-# ---------------------------------------------------------------------------
-# Run MOEA-D
-# ---------------------------------------------------------------------------
-
-if "moead" in args.algos:
-    print("\n--- MOEA-D ---")
-    sampling_moead = GreedySampling(greedy_x) if greedy_x is not None else None
-    algo_moead = MOEAD(
-        ref_dirs      = ref_dirs_moead,
-        n_neighbors   = 20,
-        sampling      = sampling_moead,
-        crossover     = OOSCrossover(eta=20),
-        mutation      = OOSMutation(eta=20),
-        repair        = OOSRepair(stochastic=True),
-        normalize     = True,
-        decomposition = PBI(theta=5.0),
-    )
-    t0 = time.time()
-    res_moead = minimize(problem, algo_moead, termination=("n_eval", args.n_eval),
-                         seed=trial, verbose=False, callback=ProgressCallback("moead"))
-    print(f"  done in {time.time()-t0:.1f}s")
-    save_front(res_moead, "moead")
-
-# ---------------------------------------------------------------------------
-# Run PSO (MOPSO-CD)
-# ---------------------------------------------------------------------------
-
-if "pso" in args.algos:
-    print("\n--- PSO (MOPSO-CD) ---")
-    sampling_pso = GreedySampling(greedy_x) if greedy_x is not None else None
-    algo_pso = MOPSO_CD_Repair(
-        repair       = OOSRepair(stochastic=True),
-        pop_size     = len(ref_dirs),
-        archive_size = len(ref_dirs) * 2,
-        sampling     = sampling_pso,
-    )
-    t0 = time.time()
-    res_pso = minimize(problem, algo_pso, termination=("n_eval", args.n_eval),
-                       seed=trial, verbose=False, callback=ProgressCallback("pso"))
-    print(f"  done in {time.time()-t0:.1f}s")
-    save_front(res_pso, "pso")
 
 print(f"\nAll GAs done for {scenario} trial {trial}.")

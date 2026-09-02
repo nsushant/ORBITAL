@@ -15,6 +15,7 @@ import h5py
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from bcr_model import objectives3
 
 # ---------------------------------------------------------------------------
 # Config
@@ -106,10 +107,7 @@ def load_fronts(fid, algo, scenario_key):
     grp = fid[path]
     fronts = []
     for trial_key in sorted(grp.keys()):
-        data = grp[trial_key][:]
-        if data.ndim == 2 and data.shape[0] == 3 and data.shape[1] != 3:
-            data = data.T
-        fronts.append(data)
+        fronts.append(objectives3(grp[trial_key][:]))
     return fronts
 
 

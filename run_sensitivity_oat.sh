@@ -88,6 +88,15 @@ if should_run "nsga3rk"; then
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
+
+    echo "── NSGA-III: sweeping n_ref_dirs ──"
+    for level in 4 8 12 16; do
+        for trial in $(seq 1 $N_TRIALS); do
+            echo "  nsga3rk  n_ref_dirs=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk" "n_ref_dirs" "$level" "$H5_FILE" \
+                --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
+        done
+    done
 fi
 
 # ── NSGA-III-T ──────────────────────────────────────────────────────────────
@@ -111,20 +120,20 @@ if should_run "nsga3rk_ot"; then
         done
     done
 
-    echo "── NSGA-III-T: sweeping shift ──"
-    for level in 5.0 15.0 30.0 60.0; do
+    echo "── NSGA-III-T: sweeping crossover_prob ──"
+    for level in 0.5 0.7 0.9 1.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  shift=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "shift" "$level" "$H5_FILE" \
+            echo "  nsga3rk_ot  crossover_prob=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "crossover_prob" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III-T: sweeping top_pct ──"
-    for level in 0.25 0.5 0.75 1.0; do
+    echo "── NSGA-III-T: sweeping n_ref_dirs ──"
+    for level in 4 8 12 16; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  top_pct=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "top_pct" "$level" "$H5_FILE" \
+            echo "  nsga3rk_ot  n_ref_dirs=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "n_ref_dirs" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done

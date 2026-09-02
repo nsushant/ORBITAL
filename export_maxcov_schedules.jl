@@ -61,62 +61,11 @@ out_mdls = joinpath(OUT_DIR, "maxcov_schedule_MDLS.json")
 save_schedule_json(sched_mdls, unas_mdls, out_mdls)
 @info "Saved MDLS max-coverage schedule" path=out_mdls f2=arch_mdls.total_serv_time_unassigned[idx_mdls] f3=arch_mdls.total_vehicles_used[idx_mdls]
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  2. NSGA-III
-# ═════════════════════════════════════════════════════════════════════════════
-function run_nsga3_export(ctx::RunContext; budget_evals::Int=BUDGET_EVALS)
-    refs     = das_dennis(3, REF_H)
-    pop_size = size(refs, 1)
-    @info "Running NSGA-III export …" budget_evals pop_size
-
-    seed_sched = sched_eval(copy_schedule(ctx.init_sched), ctx.init_unas)
-    seed_tour  = encode_tour(seed_sched, ctx)
-    pop        = Vector{TourIndividual}(undef, pop_size)
-    pop[1]     = seed_tour
-    Threads.@threads for i in 2:pop_size
-        pop[i] = tour_mutate(seed_tour, ctx; use_timing_mutation=false)
-    end
-
-    n_evaluated = pop_size
-    while n_evaluated < budget_evals
-        fronts = nondominated_sort(pop)
-        rank   = zeros(Int, pop_size)
-        for (r, front) in enumerate(fronts), i in front
-            rank[i] = r
-        end
-        offspring = Vector{TourIndividual}(undef, pop_size)
-        Threads.@threads for i in 1:pop_size
-            a, b = rand(1:pop_size), rand(1:pop_size)
-            p1   = rank[a] <= rank[b] ? a : b
-            a, b = rand(1:pop_size), rand(1:pop_size)
-            p2   = rank[a] <= rank[b] ? a : b
-            child        = rand() < 0.8 ? ox_crossover(pop[p1], pop[p2], ctx) : pop[p1]
-            offspring[i] = tour_mutate(child, ctx; use_timing_mutation=true)
-        end
-        n_evaluated += pop_size
-        pop = nsga3_select(vcat(pop, offspring), pop_size, refs)
-    end
-    @info "NSGA-III export done" n_evaluated
-    return pop
-end
-
-@info "Running NSGA-III (DV=$(DV_BUDGET_MAX) m/s) …"
-nsga3_pop = run_nsga3_export(ctx; budget_evals=BUDGET_EVALS)
-
-f2s_nsga3      = [ind.f2 for ind in nsga3_pop]
-idx_nsga3      = find_maxcov(f2s_nsga3)
-ind_maxcov     = nsga3_pop[idx_nsga3]
-decoded_nsga3  = decode_tour(ind_maxcov, ctx)
-
-out_nsga3 = joinpath(OUT_DIR, "maxcov_schedule_NSGA-III.json")
-save_schedule_json(decoded_nsga3.schedule, decoded_nsga3.unassigned, out_nsga3)
-@info "Saved NSGA-III max-coverage schedule" path=out_nsga3 f2=ind_maxcov.f2 f3=ind_maxcov.f3
 
 println()
 println("═" ^ 60)
-println("  Max-coverage schedules saved:")
-println("  MDLS     → $out_mdls")
-println("  NSGA-III → $out_nsga3")
+println("  Max-coverage schedule saved:")
+println("  MDLS → $out_mdls")
 println("═" ^ 60)
 println()
-println("Next: python plot_gantt.py --mdls outputs/maxcov_schedule_MDLS.json --nsga outputs/maxcov_schedule_NSGA-III.json")
+println("Next: python plot_gantt.py --mdls outputs/maxcov_schedule_MDLS.json")

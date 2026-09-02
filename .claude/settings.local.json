@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat /Users/sushantnigudkar/.julia/packages/Metaheuristics/OKjXA/src/common/set_user_solutions.jl)",
+      "Read(//Users/sushantnigudkar/.julia/packages/Metaheuristics/OKjXA/src/common/**)"
+    ]
+  }
+}

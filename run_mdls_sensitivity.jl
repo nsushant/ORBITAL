@@ -5,7 +5,7 @@
 # param_level : float value to use for that parameter
 # h5_file     : path to the shared HDF5 output file
 #
-# Writes dataset /{algo}/{param_name}/{param_level}/trial_{nn} → (n_solutions × 3)
+# Writes dataset /{algo}/{param_name}/{param_level}/trial_{nn} → (3 × n_solutions)
 # Columns: f1_dv, f2_unrecovered_value, f3_vehicles
 
 length(ARGS) >= 5 || error("Usage: julia run_mdls_sensitivity.jl <key> <trial> <param_name> <param_level> <h5_file> [demand_dir] [dv_budget]")
@@ -69,11 +69,13 @@ archive = MDLS(MDLS_ITERS, demands, sim, ct, mintof, min_dv;
 elapsed = time() - t0
 @info "Done" elapsed_sec=round(elapsed; digits=1) n_solutions=length(archive.solutions)
 
-rows = [(archive.total_deltaV[i],
-         archive.total_serv_time_unassigned[i],
-         archive.total_vehicles_used[i])
-        for i in eachindex(archive.solutions)
-        if archive.total_deltaV[i] < INFEASIBLE_LEG_COST]
+rows = Tuple{Float64,Float64,Int}[]
+for i in eachindex(archive.solutions)
+    archive.total_deltaV[i] >= INFEASIBLE_LEG_COST && continue
+    push!(rows, (archive.total_deltaV[i],
+                 archive.total_serv_time_unassigned[i],
+                 archive.total_vehicles_used[i]))
+end
 
 data = Matrix{Float64}(undef, length(rows), 3)
 for (i, (dv, us, veh)) in enumerate(rows)
@@ -91,7 +93,10 @@ h5open(h5_file, "cw") do fid
         delete_object(fid, group_path)
     end
     fid[group_path] = collect(data')
-    attrs(fid[group_path])["columns"] = "f1_dv,f2_unrecovered_value,f3_vehicles"
+    attrs(fid[group_path])["columns"]            = "f1_dv,f2_unrecovered_value,f3_vehicles"
+    attrs(fid[group_path])["total_demand_value"] = haskey(demands, "asset_values") ?
+        sum(demands["asset_values"]) : 0.0
+    attrs(fid[group_path])["fee_model"]          = "per_demand"
 end
 
 @info "Saved to HDF5" path=h5_file group=group_path n_solutions=length(rows)

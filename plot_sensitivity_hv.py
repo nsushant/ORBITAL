@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from bcr_model import objectives3
 
 # ---------------------------------------------------------------------------
 # Config
@@ -113,10 +114,7 @@ def load_fronts(fid, algo, scenario_key):
     grp = fid[path]
     fronts = []
     for trial_key in sorted(grp.keys()):
-        data = grp[trial_key][:]
-        if data.ndim == 2 and data.shape[0] == 3 and data.shape[1] != 3:
-            data = data.T
-        fronts.append(data)
+        fronts.append(objectives3(grp[trial_key][:]))
     return fronts
 
 
@@ -151,7 +149,8 @@ with h5py.File(H5_FILE, "r") as fid:
             ]
             for trial_hvs in all_hvs[algo]:
                 if trial_hvs:
-                    global_max = max(global_max, max(trial_hvs))
+                    q95 = np.percentile(trial_hvs, 95)
+                    global_max = max(global_max, q95)
         cached.append((se, all_hvs))
 
     hv_max = global_max if global_max > 0 else 1.0
@@ -175,6 +174,7 @@ with h5py.File(H5_FILE, "r") as fid:
                 medians = np.array([np.median(v) if v else 0.0 for v in vals])
                 q25     = np.array([np.percentile(v, 25) if v else 0.0 for v in vals])
                 q75     = np.array([np.percentile(v, 75) if v else 0.0 for v in vals])
+                q75     = np.minimum(q75, 1.05)
                 ax.plot(x, medians, marker="o", color=COLOURS[algo],
                         linewidth=2, markersize=5, label=ALGOS[algo])
                 ax.fill_between(x, q25, q75, color=COLOURS[algo], alpha=0.2)
@@ -210,6 +210,7 @@ with h5py.File(H5_FILE, "r") as fid:
 
         ax.set_title(se["title"], fontsize=FS)
         ax.set_xlabel(se["xlabel"], fontsize=FS)
+        ax.set_ylim(0, 1.05)
         ax.tick_params(axis="y", labelsize=FS_TICK)
         ax.grid(False)
         if ax is axes[0]:

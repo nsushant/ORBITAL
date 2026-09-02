@@ -16,6 +16,11 @@ include(joinpath(@__DIR__, "generate_starlink_demands.jl"))
 const N_TRIALS_SL  = 5
 const ALG_NAMES_SL = ["MDLS", "NSGA-III", "MOEA/D", "PSO"]
 
+# Cost-table fidelity: true → Section 4.3 continuous-thrust NLP (per plane-pair
+# spiral), false → Section 4.2 impulsive estimate. fmax in km/s² (3.5e-6 = paper).
+const CONTINUOUS_THRUST = false
+const FMAX_KMS2         = 3.5e-6
+
 # ── Step 1: fetch TLEs and sample 200 satellites ──────────────────────────────
 
 sats, launch_dates, sat_values = fetch_and_sample(n_targets=200, seed=42)
@@ -42,13 +47,15 @@ sim_params = Dict(
 sim = gen_simulation_from_sats(sats, sim_params)
 
 # ── Step 4: compute cost table (monthly resolution, AMR refines further) ──────
-base_ct    = gen_cost_table(sim; tof_step=30.0, t_end=t_end_days)
+base_ct    = gen_cost_table(sim; tof_step=30.0, t_end=t_end_days,
+                            continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 mintof_tab = build_min_tof_table()
 
 # ── Step 5: adaptive mesh refinement ─────────────────────────────────────────
 
 @info "Running adaptive mesh refinement …"
-adap_ct = gen_adaptive_cost_table(sim, base_ct; target_dv=50.0, compute_costs=true)
+adap_ct = gen_adaptive_cost_table(sim, base_ct; target_dv=50.0, compute_costs=true,
+                                  continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 
 # ── Step 6: run all algorithms (N_TRIALS_SL trials) ──────────────────────────
 

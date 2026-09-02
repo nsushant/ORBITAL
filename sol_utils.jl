@@ -227,7 +227,9 @@ function build_min_dv_table(cost_table, n_nodes)
 end
 
 const INFEASIBLE_LEG_COST = 1.0e6
-const COST_TABLE_PERIOD   = 1825.0  # days — cost table time extent (5-year horizon)
+# Edelbaum tables cover ~400 days (J2 precession period). Override with
+# COST_TABLE_PERIOD if using a longer Lu table (e.g. 1825).
+const COST_TABLE_PERIOD = parse(Float64, get(ENV, "COST_TABLE_PERIOD", "400.0"))
 
 # For missions longer than COST_TABLE_PERIOD days, wrap departure epoch onto the cost table's
 # time range using modular arithmetic (J2 precession is approximately periodic over ~400 days).
@@ -238,6 +240,36 @@ function snap_cost(CostTable, from_idx, to_idx, dep_epoch, arr_epoch)
     dep_snap = clamp(round(dep_w / 15.0) * 15.0,  0.0, COST_TABLE_PERIOD)
     arr_snap = clamp(round(arr_w / 15.0) * 15.0, 15.0, COST_TABLE_PERIOD)
     get(CostTable, (from_idx, to_idx, dep_snap, arr_snap), INFEASIBLE_LEG_COST)
+end
+
+@inline function demand_ready(demands, uid::Int)
+    av = get(demands, "available_times", nothing)
+    av === nothing && return 0.0
+    return Float64(av[uid])
+end
+
+function demand_ready_vec(demands)
+    n = length(demands["demand_deadlines"])
+    av = get(demands, "available_times", nothing)
+    av === nothing && return zeros(Float64, n)
+    return av
+end
+
+function subset_unassigned(uids, demands)
+    sat_ids    = demands["sat_identifiers"]
+    deadlines  = demands["demand_deadlines"]
+    svc_times  = demands["service_times"]
+    available  = demand_ready_vec(demands)
+    asset_vals = get(demands, "asset_values", nothing)
+    d = Dict{String, Any}(
+        "sat_identifiers"  => [sat_ids[u] for u in uids],
+        "demand_deadlines" => [deadlines[u] for u in uids],
+        "available_times"  => [available[u] for u in uids],
+        "service_times"    => [svc_times[u] for u in uids],
+        "UIDs"             => collect(uids),
+    )
+    asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in uids])
+    return d
 end
 
 # ── Weibull depreciation ───────────────────────────────────────────────────────
@@ -253,20 +285,27 @@ end
 
 function get_best_next(current_sim_idx, current_time, unrouted_set,
                        sat_ids, svc_times, deadlines,
-                       MinTOFTable, sim_idx_for_uid)
-    best_uid = nothing
-    best_dv  = Inf
-    for uid in unrouted_set
-        cand_idx = sim_idx_for_uid[uid]
-        key      = (current_sim_idx, cand_idx)
-        haskey(MinTOFTable, key) || continue
-        tof, dv = MinTOFTable[key]
-        dv >= best_dv && continue
-        current_time + tof + svc_times[uid] > deadlines[uid] && continue
-        best_dv  = dv
-        best_uid = uid
+                       MinTOFTable, sim_idx_for_uid, available)
+    # Prefer demands that are already ready by arrival (no extra wait). If none,
+    # allow waiting until available_times so later-year jobs can still be served.
+    for allow_wait in (false, true)
+        best_uid = nothing
+        best_dv  = Inf
+        for uid in unrouted_set
+            cand_idx = sim_idx_for_uid[uid]
+            key      = (current_sim_idx, cand_idx)
+            haskey(MinTOFTable, key) || continue
+            tof, dv = MinTOFTable[key]
+            dv >= best_dv && continue
+            arr = max(current_time + tof, available[uid])
+            arr + svc_times[uid] > deadlines[uid] && continue
+            !allow_wait && available[uid] > current_time + tof && continue
+            best_dv  = dv
+            best_uid = uid
+        end
+        best_uid !== nothing && return best_uid, best_dv
     end
-    return best_uid, best_dv
+    return nothing, Inf
 end
 
 function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_time=0.0, refuel_time=0.5, min_tof_table=nothing)
@@ -277,6 +316,7 @@ function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_
     sat_ids      = demands["sat_identifiers"]
     svc_times    = demands["service_times"]
     deadlines    = demands["demand_deadlines"]
+    available    = demand_ready_vec(demands)
     sim_idx_for_uid = [name_to_idx[sat_ids[uid]] for uid in demands["UIDs"]]
 
     unrouted   = Set{Int}(demands["UIDs"])
@@ -303,13 +343,13 @@ function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_
         while true
             best_uid, best_dv = get_best_next(current_sim_idx, current_time,
                                               unrouted, sat_ids, svc_times, deadlines,
-                                              MinTOFTable, sim_idx_for_uid)
+                                              MinTOFTable, sim_idx_for_uid, available)
             best_uid === nothing && break
 
             cand_idx = sim_idx_for_uid[best_uid]
             tof, _   = MinTOFTable[(current_sim_idx, cand_idx)]
             svc_time = svc_times[best_uid]
-            arr_time = current_time + tof
+            arr_time = max(current_time + tof, available[best_uid])
 
             if leg_dv + best_dv > dv_budget
                 if current_sim_idx == dep_idx
@@ -359,14 +399,7 @@ function make_init_schedule(demands, sim; nvehicles=10, dv_budget=5000.0, start_
         unassigned = nothing
     else
         uids_out   = collect(unrouted)
-        asset_vals = get(demands, "asset_values", nothing)
-        unassigned = Dict{String, Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in uids_out],
-            "demand_deadlines" => [deadlines[u] for u in uids_out],
-            "service_times"    => [svc_times[u] for u in uids_out],
-            "UIDs"             => uids_out,
-        )
-        asset_vals !== nothing && (unassigned["asset_values"] = [asset_vals[u] for u in uids_out])
+        unassigned = subset_unassigned(uids_out, demands)
     end
 
     return schedule, unassigned

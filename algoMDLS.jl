@@ -27,6 +27,7 @@ function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_
     sat_ids   = demands["sat_identifiers"]
     svc_times = demands["service_times"]
     deadlines = demands["demand_deadlines"]
+    available = demand_ready_vec(demands)
 
     legs = [(veh.costs[i], v, i) for (v, veh) in enumerate(schedule)
                                   for i in 2:length(veh.visitedUID)]
@@ -83,6 +84,12 @@ function opt_times_combined(schedule, demands, CostTable, MinTOFTable, sim; top_
         d_deps_up = veh.departures[1:i-1] .- shift_earlier
         feas_d = d_arrs_up[1] >= 0.0
         if feas_d
+            for j in eachindex(d_arrs_up)
+                uid = veh.visitedUID[j]
+                uid > 0 && d_arrs_up[j] < available[uid] && (feas_d = false; break)
+            end
+        end
+        if feas_d
             total_d = snap_cost(CostTable, from_idx, to_idx, d_deps_up[end], veh.arrivals[i])
             if total_d < best_cost
                 best_cost = total_d; best_move = :D
@@ -118,7 +125,7 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
     sat_ids    = demands["sat_identifiers"]
     svc_times  = demands["service_times"]
     deadlines  = demands["demand_deadlines"]
-    asset_vals = get(demands, "asset_values", nothing)
+    available  = demand_ready_vec(demands)
 
     length(schedule) <= 1 && return schedule, unassigned_in
 
@@ -177,7 +184,7 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
                 tof_prev_cand, _ = get(MinTOFTable, (prev_idx, cand_idx), (Inf, Inf))
                 isfinite(tof_prev_cand) || continue
 
-                arr_cand = veh.departures[p] + tof_prev_cand
+                arr_cand = max(veh.departures[p] + tof_prev_cand, available[uid])
                 dep_cand = arr_cand + svc
                 dep_cand > dl && continue
 
@@ -226,7 +233,7 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
                 tof_depot_cand, _ = get(MinTOFTable, (depot_idx, cand_idx), (Inf, Inf))
                 isfinite(tof_depot_cand) || continue
 
-                arr_cand2 = dep_depot + tof_depot_cand
+                arr_cand2 = max(dep_depot + tof_depot_cand, available[uid])
                 dep_cand2 = arr_cand2 + svc
                 dep_cand2 > dl && continue
                 dv_depot_cand = snap_cost(CostTable, depot_idx, cand_idx, dep_depot, arr_cand2)
@@ -270,7 +277,7 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
                 tof_depot_cand, _ = get(MinTOFTable, (depot_idx, cand_idx), (Inf, Inf))
                 isfinite(tof_depot_cand) || continue
 
-                arr_cand3 = veh.departures[n] + tof_depot_cand
+                arr_cand3 = max(veh.departures[n] + tof_depot_cand, available[uid])
                 dep_cand3 = arr_cand3 + svc
                 dep_cand3 > dl && continue
                 dv_depot_cand = snap_cost(CostTable, depot_idx, cand_idx, veh.departures[n], arr_cand3)
@@ -400,24 +407,9 @@ function consolidate_demands(schedule, demands, CostTable, MinTOFTable, sim,
     if isempty(unassigned_uids)
         unassigned = unassigned_in
     elseif unassigned_in === nothing
-        d = Dict{String, Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in unassigned_uids],
-            "demand_deadlines" => [deadlines[u] for u in unassigned_uids],
-            "service_times"    => [svc_times[u] for u in unassigned_uids],
-            "UIDs"             => unassigned_uids,
-        )
-        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in unassigned_uids])
-        unassigned = d
+        unassigned = subset_unassigned(unassigned_uids, demands)
     else
-        all_uids = vcat(unassigned_in["UIDs"], unassigned_uids)
-        d = Dict{String, Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in all_uids],
-            "demand_deadlines" => [deadlines[u] for u in all_uids],
-            "service_times"    => [svc_times[u] for u in all_uids],
-            "UIDs"             => all_uids,
-        )
-        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in all_uids])
-        unassigned = d
+        unassigned = subset_unassigned(vcat(unassigned_in["UIDs"], unassigned_uids), demands)
     end
 
     return schedule, unassigned
@@ -775,7 +767,7 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
     svc_times   = demands["service_times"]
     deadlines   = demands["demand_deadlines"]
     sat_ids     = demands["sat_identifiers"]
-    asset_vals  = get(demands, "asset_values", nothing)
+    available   = demand_ready_vec(demands)
 
     unrouted = Set{Int}(unassigned["UIDs"])
     sim_idx_for_uid = [name_to_idx[sat_ids[uid]] for uid in demands["UIDs"]]
@@ -786,6 +778,10 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
 
     all_depot  = [uid for veh in schedule for uid in veh.visitedUID if uid < 0]
     depot_uid  = isempty(all_depot) ? -1 : minimum(all_depot) - 1
+
+    if !isempty(unassigned["UIDs"])
+        start_time = max(start_time, minimum(available[uid] for uid in unassigned["UIDs"]))
+    end
 
     visited_uids = Int[depot_uid]
     visited_sats = String[depot_name]
@@ -800,13 +796,13 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
     while true
         best_uid, best_dv = get_best_next(current_sim_idx, current_time,
                                           unrouted, sat_ids, svc_times, deadlines,
-                                          MinTOFTable, sim_idx_for_uid)
+                                          MinTOFTable, sim_idx_for_uid, available)
         best_uid === nothing && break
 
         cand_idx = sim_idx_for_uid[best_uid]
         tof, _   = MinTOFTable[(current_sim_idx, cand_idx)]
         svc_time = svc_times[best_uid]
-        arr_time = current_time + tof
+        arr_time = max(current_time + tof, available[best_uid])
 
         if leg_dv + best_dv > dv_budget
             if current_sim_idx == dep_idx
@@ -857,13 +853,7 @@ function create_vehicle(schedule, demands, unassigned, CostTable, MinTOFTable, s
         return schedule, unassigned
     else
         remaining_uids = collect(unrouted)
-        d = Dict{String, Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in remaining_uids],
-            "demand_deadlines" => [deadlines[u] for u in remaining_uids],
-            "service_times"    => [svc_times[u] for u in remaining_uids],
-            "UIDs"             => remaining_uids,
-        )
-        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in remaining_uids])
+        d = subset_unassigned(remaining_uids, demands)
         return schedule, d
     end
 end
@@ -887,6 +877,7 @@ function _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTabl
     svc_times = demands["service_times"]
     deadlines = demands["demand_deadlines"]
     sat_ids   = demands["sat_identifiers"]
+    available = demand_ready_vec(demands)
 
     remaining = copy(removed_uids)
 
@@ -911,7 +902,7 @@ function _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTabl
                     prev_idx  = name_to_idx[prev_name]
                     haskey(MinTOFTable, (prev_idx, r_idx)) || continue
                     tof_pr = MinTOFTable[(prev_idx, r_idx)][1]
-                    arr_r  = veh.departures[p] + tof_pr
+                    arr_r  = max(veh.departures[p] + tof_pr, available[uid])
                     arr_r + svc > dl && continue
 
                     next_idx = p < n ? name_to_idx[veh.visitedSAT[p+1]] : nothing
@@ -924,6 +915,7 @@ function _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTabl
                         old_dv = 0.0
                     else
                         arr_next = veh.arrivals[p+1]
+                        dep_r > arr_next && continue   # waiting would delay the next stop
                         dv_in    = snap_cost(CostTable, prev_idx, r_idx, veh.departures[p], arr_r)
                         dv_out   = snap_cost(CostTable, r_idx, next_idx, dep_r, arr_next)
                         old_dv   = veh.costs[p+1]
@@ -959,7 +951,7 @@ function _regret2_insert!(schedule, removed_uids, demands, CostTable, MinTOFTabl
         r_idx   = name_to_idx[sat_ids[best_uid]]
         prev_idx = name_to_idx[veh.visitedSAT[best_p]]
         tof_pr  = MinTOFTable[(prev_idx, r_idx)][1]
-        arr_r   = veh.departures[best_p] + tof_pr
+        arr_r   = max(veh.departures[best_p] + tof_pr, available[best_uid])
         dep_r   = arr_r + svc_times[best_uid]
         dv_in   = snap_cost(CostTable, prev_idx, r_idx, veh.departures[best_p], arr_r)
 
@@ -1109,29 +1101,10 @@ end
 # ── Helper: merge newly unassigned UIDs into the unassigned dict ──────────────
 function _merge_unassigned(unassigned_in, new_uids, demands)
     isempty(new_uids) && return unassigned_in
-    sat_ids    = demands["sat_identifiers"]
-    deadlines  = demands["demand_deadlines"]
-    svc_times  = demands["service_times"]
-    asset_vals = get(demands, "asset_values", nothing)
     if unassigned_in === nothing
-        d = Dict{String,Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in new_uids],
-            "demand_deadlines" => [deadlines[u] for u in new_uids],
-            "service_times"    => [svc_times[u] for u in new_uids],
-            "UIDs"             => new_uids,
-        )
-        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in new_uids])
-        return d
+        return subset_unassigned(new_uids, demands)
     else
-        all_uids = vcat(unassigned_in["UIDs"], new_uids)
-        d = Dict{String,Any}(
-            "sat_identifiers"  => [sat_ids[u] for u in all_uids],
-            "demand_deadlines" => [deadlines[u] for u in all_uids],
-            "service_times"    => [svc_times[u] for u in all_uids],
-            "UIDs"             => all_uids,
-        )
-        asset_vals !== nothing && (d["asset_values"] = [asset_vals[u] for u in all_uids])
-        return d
+        return subset_unassigned(vcat(unassigned_in["UIDs"], new_uids), demands)
     end
 end
 

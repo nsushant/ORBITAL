@@ -1,31 +1,6 @@
 import numpy as np
 from pymoo.core.problem import Problem
-from pymoo.core.repair import Repair
-from pymoo.core.crossover import Crossover
-from pymoo.core.mutation import Mutation
-from pymoo.algorithms.moo.mopso_cd import MOPSO_CD
 from loaders import snap_cost
-
-
-# ── SBX / PM helpers (used by OOSCrossover and OOSMutation) ──────────────────
-
-def _sbx(p1, p2, xl, xu, eta):
-    u = np.random.rand(len(p1))
-    beta = np.where(u <= 0.5,
-                    (2.0 * u) ** (1.0 / (eta + 1)),
-                    (1.0 / (2.0 * (1.0 - u))) ** (1.0 / (eta + 1)))
-    c1 = np.clip(0.5 * ((p1 + p2) - beta * np.abs(p2 - p1)), xl, xu)
-    c2 = np.clip(0.5 * ((p1 + p2) + beta * np.abs(p2 - p1)), xl, xu)
-    return c1, c2
-
-
-def _pm(x, xl, xu, eta):
-    delta = np.maximum(xu - xl, 1e-10)
-    u = np.random.rand(len(x))
-    d = np.where(u < 0.5,
-                 (2.0 * u) ** (1.0 / (eta + 1)) - 1.0,
-                 1.0 - (2.0 * (1.0 - u)) ** (1.0 / (eta + 1)))
-    return np.clip(x + d * delta, xl, xu)
 
 
 class OOSProblem(Problem):
@@ -99,510 +74,6 @@ class OOSProblem(Problem):
         self.dv_budget    = float(dv_budget)
 
         super().__init__(n_var=4*N, n_obj=3, n_constr=0, xl=xl, xu=xu)
-
-    # ------------------------------------------------------------------
-    # Repair
-    # ------------------------------------------------------------------
-
-    def repair_individual(self, x, stochastic=False, n_slots=4):
-        """
-        Walk each vehicle's sorted tour and clamp arrivals up to satisfy
-        min-tof ordering. Demands that cannot be feasibly reached are
-        marked unserved (vehicle_assignment = 0).
-
-        stochastic : if True, pick randomly among the first n_slots valid
-                     arrival grid slots instead of always taking the earliest.
-        n_slots    : max candidate slots to collect before sampling.
-
-        Modifies x in-place and returns it.
-        """
-        N             = self.Ndems
-        deadlines     = self.deadlines
-        service_times = self.service_times
-        sat_ids       = self.sat_ids
-        depot_id      = self.depot_id
-        min_tof_table = self.min_tof_table
-        refuel_time   = self.refuel_time
-
-        # 4N read — OLD 5N:
-        # visit_order         = x[0:N]
-        # vehicle_assignments = np.clip(np.round(x[N:2*N]), 0, self.maxV).astype(int)
-        # arrivals            = x[2*N:3*N].copy()
-        # depot_visits        = np.clip(np.round(x[3*N:4*N]), 0, 1).astype(int)
-        # depot_arrivals      = x[4*N:5*N].copy()
-        vehicle_assignments = np.clip(np.round(x[0:N]),     0, self.maxV).astype(int)
-        arrivals            = x[N:2*N].copy() * deadlines        # denormalise
-        depot_visits        = np.clip(np.round(x[2*N:3*N]), 0, 1).astype(int)
-        depot_arrivals      = x[3*N:4*N].copy() * self.max_deadline  # denormalise
-
-        for v in range(1, self.maxV + 1):
-            indices = np.where(vehicle_assignments == v)[0]
-            if len(indices) == 0:
-                continue
-
-            # Sort by arrival time instead of visit_order variable
-            # OLD 5N: sorted_local = np.argsort(visit_order[indices])
-            sorted_local = np.argsort(arrivals[indices])
-            sorted_idx   = indices[sorted_local]
-            depot_vis    = depot_visits[sorted_idx].copy()
-            depot_vis[-1] = 1   # circular wrap: last demand always has depot-return flag
-
-            last_dep_time    = 0.0
-            last_sat_idx     = depot_id
-            last_depot_vis   = False
-            last_demand_idx  = -1
-            cum_dv           = 0.0
-
-            for k, i in enumerate(sorted_idx):
-                if last_depot_vis:
-                    key_to_dep   = (last_sat_idx, depot_id)
-                    key_from_dep = (depot_id, sat_ids[i])
-                    tof_to_dep   = min_tof_table[key_to_dep][0]   if key_to_dep   in min_tof_table else 0.0
-                    tof_from_dep = min_tof_table[key_from_dep][0] if key_from_dep in min_tof_table else 0.0
-                    arr_depot_min = last_dep_time + tof_to_dep
-                    arr_depot = max(depot_arrivals[last_demand_idx], arr_depot_min)
-                    dep_depot = arr_depot + refuel_time
-                    depot_arrivals[last_demand_idx] = arr_depot
-                    min_arr   = dep_depot + tof_from_dep
-                else:
-                    key     = (last_sat_idx, sat_ids[i])
-                    min_tof = min_tof_table[key][0] if key in min_tof_table else 0.0
-                    min_arr = last_dep_time + min_tof
-
-                arrivals[i] = max(arrivals[i], min_arr)
-
-                leg_from = depot_id      if last_depot_vis else last_sat_idx
-                leg_dep  = dep_depot     if last_depot_vis else last_dep_time
-                dep_grid = self.dep_grid
-                arr_grid = self.arr_grid
-                dep_s = float(dep_grid[np.searchsorted(dep_grid, leg_dep).clip(0, len(dep_grid) - 1)])
-                arr_start_idx = np.searchsorted(arr_grid, arrivals[i]).clip(0, len(arr_grid) - 1)
-                found = False
-                if stochastic:
-                    valid_slots = []
-                    for ai in range(int(arr_start_idx), len(arr_grid)):
-                        arr_s = float(arr_grid[ai])
-                        if arr_s > deadlines[i]:
-                            break
-                        c = self.cost_table.get((int(leg_from), int(sat_ids[i]), dep_s, arr_s), np.inf)
-                        if c < 1e7:
-                            valid_slots.append(arr_s)
-                            if len(valid_slots) >= n_slots:
-                                break
-                    if valid_slots:
-                        n = len(valid_slots)
-                        weights = np.arange(n, 0, -1, dtype=float)
-                        weights /= weights.sum()
-                        arrivals[i] = valid_slots[np.random.choice(n, p=weights)]
-                        found = True
-                else:
-                    for ai in range(int(arr_start_idx), len(arr_grid)):
-                        arr_s = float(arr_grid[ai])
-                        if arr_s > deadlines[i]:
-                            break
-                        c = self.cost_table.get((int(leg_from), int(sat_ids[i]), dep_s, arr_s), np.inf)
-                        if c < 1e7:
-                            arrivals[i] = arr_s
-                            found = True
-                            break
-
-                if not found or arrivals[i] + service_times[i] > deadlines[i]:
-                    vehicle_assignments[i] = 0
-                    arrivals[i]  = 0.0
-                    depot_vis[k] = 0
-                else:
-                    leg_dv = self.cost_table.get(
-                        (int(leg_from), int(sat_ids[i]), dep_s, float(arrivals[i])), 0.0)
-                    cum_dv = leg_dv if last_depot_vis else cum_dv + leg_dv
-                    if cum_dv > self.dv_budget:
-                        depot_vis[k] = 1
-                        cum_dv = 0.0
-                    dep_i = arrivals[i] + service_times[i]
-                    last_dep_time   = dep_i
-                    last_sat_idx    = sat_ids[i]
-                    last_demand_idx = i
-                    last_depot_vis  = bool(depot_vis[k])
-
-            for k, i in enumerate(sorted_idx):
-                depot_visits[i] = depot_vis[k]
-
-        # 4N write-back (normalise arrivals and depot_arrivals) — OLD 5N:
-        # x[N:2*N]   = vehicle_assignments.astype(float)
-        # x[2*N:3*N] = arrivals
-        # x[3*N:4*N] = depot_visits.astype(float)
-        # x[4*N:5*N] = depot_arrivals
-        x[0:N]     = vehicle_assignments.astype(float)
-        x[N:2*N]   = np.where(deadlines > 0, arrivals / deadlines, 0.0)
-        x[2*N:3*N] = depot_visits.astype(float)
-        x[3*N:4*N] = depot_arrivals / self.max_deadline
-        return x
-
-    # ------------------------------------------------------------------
-    # Decode
-    # ------------------------------------------------------------------
-
-    def decode(self, x):
-        """
-        Build arrivals, departures, vehicle tours, and leg list from a
-        repaired solution vector.
-
-        Returns
-        -------
-        arrivals     : ndarray (Ndems,)
-        departures   : ndarray (Ndems,)
-        sorted_tours : list[list[int]]
-        legs         : list of (from_idx, to_idx, dep_time, arr_time)
-        """
-        N             = self.Ndems
-        deadlines     = self.deadlines
-        service_times = self.service_times
-        sat_ids       = self.sat_ids
-        depot_id      = self.depot_id
-        min_tof_table = self.min_tof_table
-        refuel_time   = self.refuel_time
-
-        # 4N read — OLD 5N:
-        # visit_order         = x[0:N]
-        # vehicle_assignments = np.clip(np.round(x[N:2*N]), 0, self.maxV).astype(int)
-        # arrivals            = x[2*N:3*N].copy()
-        # depot_visits        = np.clip(np.round(x[3*N:4*N]), 0, 1).astype(int)
-        # depot_arrivals      = np.clip(x[4*N:5*N], 0.0, self.max_deadline)
-        vehicle_assignments = np.clip(np.round(x[0:N]),     0, self.maxV).astype(int)
-        arrivals            = x[N:2*N].copy() * deadlines        # denormalise
-        depot_visits        = np.clip(np.round(x[2*N:3*N]), 0, 1).astype(int)
-        depot_arrivals      = np.clip(x[3*N:4*N] * self.max_deadline, 0.0, self.max_deadline)
-
-        departures   = np.zeros(N)
-        sorted_tours = []
-        legs         = []
-
-        for v in range(1, self.maxV + 1):
-            indices = np.where(vehicle_assignments == v)[0]
-            if len(indices) == 0:
-                sorted_tours.append([])
-                continue
-
-            # Sort by arrival time — OLD 5N: sorted_local = np.argsort(visit_order[indices])
-            sorted_local = np.argsort(arrivals[indices])
-            sorted_idx   = indices[sorted_local]
-            depot_vis    = depot_visits[sorted_idx].copy()
-            depot_vis[-1] = 1
-
-            sorted_tours.append(sorted_idx.tolist())
-
-            for k, i in enumerate(sorted_idx):
-                departures[i] = arrivals[i] + service_times[i]
-
-                if k == 0:
-                    dep_s = float(self.dep_grid[np.searchsorted(self.dep_grid, 0.0).clip(0, len(self.dep_grid) - 1)])
-                    legs.append((depot_id, sat_ids[i], dep_s, arrivals[i]))
-                else:
-                    prev = sorted_idx[k - 1]
-                    if depot_vis[k - 1]:
-                        key_to_dep    = (sat_ids[prev], depot_id)
-                        tof_to_dep    = min_tof_table[key_to_dep][0] if key_to_dep in min_tof_table else 0.0
-                        arr_depot_min = departures[prev] + tof_to_dep
-                        arr_depot     = max(depot_arrivals[prev], arr_depot_min)
-                        dep_depot     = arr_depot + self.refuel_time
-                        dep_depot_s   = float(self.dep_grid[np.searchsorted(self.dep_grid, dep_depot).clip(0, len(self.dep_grid) - 1)])
-                        legs.append((sat_ids[prev], depot_id, departures[prev], arr_depot))
-                        legs.append((depot_id, sat_ids[i], dep_depot_s, arrivals[i]))
-                    else:
-                        legs.append((sat_ids[prev], sat_ids[i], departures[prev], arrivals[i]))
-
-        return arrivals, departures, sorted_tours, legs
-
-    # ------------------------------------------------------------------
-    # ΔV cost
-    # ------------------------------------------------------------------
-
-    _INFEASIBLE_LEG_COST = 1e6  # m/s
-
-    def compute_dv(self, legs):
-        total = 0.0
-        for f, t, d, a in legs:
-            c = snap_cost(self.cost_table, self.dep_grid, self.arr_grid, f, t, d, a)
-            total += self._INFEASIBLE_LEG_COST if np.isinf(c) else c
-        return total
-
-    # ------------------------------------------------------------------
-    # Evaluate
-    # ------------------------------------------------------------------
-
-    def _evaluate(self, X, out, *args, **kwargs):
-        N        = self.Ndems
-        pop_size = len(X)
-        F        = np.zeros((pop_size, self.n_obj))
-
-        for idx in range(pop_size):
-            x = X[idx]
-            arrivals, departures, sorted_tours, legs = self.decode(x)
-
-            # OLD 5N: vehicle_assignments = np.clip(np.round(x[N:2*N]), 0, self.maxV).astype(int)
-            vehicle_assignments = np.clip(np.round(x[0:N]), 0, self.maxV).astype(int)
-            served_mask = vehicle_assignments > 0
-
-            F[idx, 0] = self.compute_dv(legs)
-            F[idx, 1] = float(len(np.unique(vehicle_assignments[served_mask]))) if served_mask.any() else 0.0
-            F[idx, 2] = float(np.sum(self.asset_values[~served_mask]))
-
-        out["F"] = F
-
-
-class OOSRepair(Repair):
-    """pymoo Repair wrapper that calls OOSProblem.repair_individual."""
-
-    def __init__(self, stochastic=False, n_slots=4):
-        super().__init__()
-        self.stochastic = stochastic
-        self.n_slots    = n_slots
-
-    def _do(self, problem, X, **kwargs):
-        for i in range(len(X)):
-            X[i] = problem.repair_individual(X[i].copy(),
-                                             stochastic=self.stochastic,
-                                             n_slots=self.n_slots)
-        return X
-
-
-# ── Mixed-encoding operators ──────────────────────────────────────────────────
-
-class OOSCrossover(Crossover):
-    """
-    Segment-aware crossover for the 4N OOS encoding:
-      x[0:N]    vehicle_assignments → uniform (categorical integer)
-      x[N:2N]   arrivals_norm       → SBX  (continuous)
-      x[2N:3N]  depot_visits        → uniform (binary)
-      x[3N:4N]  depot_arrivals_norm → SBX  (continuous)
-
-    # OLD 5N segments:
-    # SBX:     slice(0,N) visit_order, slice(2N,3N) arrivals, slice(4N,5N) depot_arrivals
-    # uniform: slice(N,2N) vehicle_assignments, slice(3N,4N) depot_visits
-    """
-
-    def __init__(self, eta=20, prob=0.9, **kwargs):
-        super().__init__(n_parents=2, n_offsprings=2, prob=prob, **kwargs)
-        self.eta = eta
-
-    def _do(self, problem, X, **kwargs):
-        _, n_matings, _ = X.shape
-        N   = problem.Ndems
-        eta = self.eta
-        Y   = np.empty_like(X)
-
-        for k in range(n_matings):
-            p1, p2 = X[0, k], X[1, k]
-            c1, c2 = p1.copy(), p2.copy()
-
-            # SBX on continuous segments (arrivals_norm, depot_arrivals_norm)
-            for sl in (slice(N, 2 * N), slice(3 * N, 4 * N)):
-                c1[sl], c2[sl] = _sbx(p1[sl], p2[sl],
-                                       problem.xl[sl], problem.xu[sl], eta)
-
-            # Uniform crossover on integer / binary segments
-            for sl in (slice(0, N), slice(2 * N, 3 * N)):
-                mask      = np.random.rand(N) < 0.5
-                c1[sl]    = np.where(mask, p1[sl], p2[sl])
-                c2[sl]    = np.where(mask, p2[sl], p1[sl])
-
-            Y[0, k], Y[1, k] = c1, c2
-
-        return Y
-
-
-class OOSMutation(Mutation):
-    """
-    Segment-aware mutation for the 4N OOS encoding:
-      x[0:N]    vehicle_assignments → random integer in [0, maxV]
-      x[N:2N]   arrivals_norm       → polynomial mutation
-      x[2N:3N]  depot_visits        → bitflip
-      x[3N:4N]  depot_arrivals_norm → polynomial mutation
-
-    # OLD 5N segments:
-    # PM:      slice(0,N) visit_order, slice(2N,3N) arrivals, slice(4N,5N) depot_arrivals
-    # randint: x[N:2N] vehicle_assignments
-    # bitflip: x[3N:4N] depot_visits
-    """
-
-    def __init__(self, eta=20, prob_var=None, **kwargs):
-        super().__init__(prob=1.0, **kwargs)
-        self.eta      = eta
-        self.prob_var = prob_var
-
-    def _do(self, problem, X, **kwargs):
-        N   = problem.Ndems
-        eta = self.eta
-        p   = self.prob_var if self.prob_var is not None else 1.0 / problem.n_var
-        Y   = X.copy()
-
-        for i in range(len(X)):
-            # Polynomial mutation on continuous segments (arrivals_norm, depot_arrivals_norm)
-            for sl in (slice(N, 2 * N), slice(3 * N, 4 * N)):
-                mask = np.random.rand(N) < p
-                if mask.any():
-                    Y[i][sl][mask] = _pm(X[i][sl][mask],
-                                         problem.xl[sl][mask],
-                                         problem.xu[sl][mask], eta)
-
-            # Random integer replacement for vehicle_assignments
-            mask = np.random.rand(N) < p
-            if mask.any():
-                Y[i, 0:N][mask] = np.random.randint(
-                    0, int(problem.maxV) + 1, int(mask.sum())
-                ).astype(float)
-
-            # Bitflip for depot_visits
-            mask = np.random.rand(N) < p
-            if mask.any():
-                Y[i, 2 * N:3 * N][mask] = 1.0 - X[i, 2 * N:3 * N][mask]
-
-        return Y
-
-
-# ── Decoder-based problem (2N encoding, no repair needed) ────────────────────
-
-class OOSProblemDecoder(OOSProblem):
-    """
-    NSGA-III variant with earliest-feasible-arrival decoder.
-
-    Encoding (n_var = 2 * N):
-      x[0:N]   visit_order keys   float [0, 1]   — sort to get visit sequence per vehicle
-      x[N:2N]  vehicle_assignments int  [0, maxV]
-
-    Decoder assigns the earliest feasible arrival to each demand in visit-order
-    sequence. Depot visits are inserted automatically when cumulative ΔV would
-    exceed dv_budget. Demands that cannot be served (arrival > deadline after
-    depot insertion) are dropped (vehicle_assignment = 0). No repair operator needed.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        N    = self.Ndems
-        xl   = np.zeros(2 * N)
-        xu   = np.concatenate([np.ones(N), np.full(N, self.maxV)])
-        # re-initialise with 2N bounds (super sets 4N)
-        from pymoo.core.problem import Problem
-        Problem.__init__(self, n_var=2*N, n_obj=3, n_constr=0, xl=xl, xu=xu)
-
-    def _decode_order(self, x):
-        N             = self.Ndems
-        visit_keys    = x[0:N]
-        vehicle_assignments = np.clip(np.round(x[N:2*N]), 0, self.maxV).astype(int)
-        served        = vehicle_assignments.copy()
-        arrivals      = np.zeros(N)
-        departures    = np.zeros(N)
-        legs          = []
-
-        for v in range(1, self.maxV + 1):
-            indices = np.where(vehicle_assignments == v)[0]
-            if len(indices) == 0:
-                continue
-            sorted_idx = indices[np.argsort(visit_keys[indices])]
-
-            state_sat = self.depot_id
-            state_dep = 0.0
-            cum_dv    = 0.0
-
-            for i in sorted_idx:
-                sid = int(self.sat_ids[i])
-
-                # ── Direct leg: scan arr_grid forward for first valid entry ──
-                key_dir = (state_sat, sid)
-                tof_dir = self.min_tof_table[key_dir][0] if key_dir in self.min_tof_table else 0.0
-                min_arr = state_dep + tof_dir
-                dep_s   = float(self.dep_grid[np.searchsorted(self.dep_grid, state_dep).clip(0, len(self.dep_grid) - 1)])
-                arr     = None
-                dv_dir  = np.inf
-                for ai in range(int(np.searchsorted(self.arr_grid, min_arr).clip(0, len(self.arr_grid) - 1)),
-                                len(self.arr_grid)):
-                    a_cand = float(self.arr_grid[ai])
-                    if a_cand + self.service_times[i] > self.deadlines[i]:
-                        break
-                    c = self.cost_table.get((state_sat, sid, dep_s, a_cand), np.inf)
-                    if not np.isinf(c):
-                        arr    = a_cand
-                        dv_dir = c
-                        break
-                if arr is None:
-                    served[i] = 0
-                    continue
-                new_cum = (dv_dir if state_sat == self.depot_id else cum_dv + dv_dir)
-
-                # ── Force depot visit if over budget ──────────────────────
-                if new_cum > self.dv_budget and state_sat != self.depot_id:
-                    # Leg 1: current satellite → depot (scan for valid arrival)
-                    key_to  = (state_sat, self.depot_id)
-                    tof_to  = self.min_tof_table[key_to][0] if key_to in self.min_tof_table else 0.0
-                    min_arr_dep = state_dep + tof_to
-                    arr_dep = None
-                    for ai in range(int(np.searchsorted(self.arr_grid, min_arr_dep).clip(0, len(self.arr_grid) - 1)),
-                                    len(self.arr_grid)):
-                        a_cand = float(self.arr_grid[ai])
-                        c = self.cost_table.get((state_sat, self.depot_id, dep_s, a_cand), np.inf)
-                        if not np.isinf(c):
-                            arr_dep = a_cand
-                            break
-                    if arr_dep is None:
-                        served[i] = 0
-                        continue
-
-                    dep_dep = arr_dep + self.refuel_time
-
-                    # Leg 2: depot → target demand (scan for valid arrival)
-                    key_fr  = (self.depot_id, sid)
-                    tof_fr  = self.min_tof_table[key_fr][0] if key_fr in self.min_tof_table else 0.0
-                    min_arr2 = dep_dep + tof_fr
-                    dep_s2  = float(self.dep_grid[np.searchsorted(self.dep_grid, dep_dep).clip(0, len(self.dep_grid) - 1)])
-                    arr     = None
-                    dv_via  = np.inf
-                    for ai in range(int(np.searchsorted(self.arr_grid, min_arr2).clip(0, len(self.arr_grid) - 1)),
-                                    len(self.arr_grid)):
-                        a_cand = float(self.arr_grid[ai])
-                        if a_cand + self.service_times[i] > self.deadlines[i]:
-                            break
-                        c = self.cost_table.get((self.depot_id, sid, dep_s2, a_cand), np.inf)
-                        if not np.isinf(c):
-                            arr    = a_cand
-                            dv_via = c
-                            break
-                    if arr is None:
-                        served[i] = 0
-                        continue
-
-                    legs.append((state_sat, self.depot_id, dep_s, arr_dep))
-                    legs.append((self.depot_id, sid, dep_s2, arr))
-                    state_sat = sid
-                    state_dep = arr + self.service_times[i]
-                    cum_dv    = dv_via
-
-                else:
-                    # ── Direct leg (deadline already checked in scan loop) ──
-                    legs.append((state_sat, sid, dep_s, arr))
-                    state_sat = sid
-                    state_dep = arr + self.service_times[i]
-                    cum_dv    = new_cum
-
-                arrivals[i]   = arr
-                departures[i] = state_dep
-
-        return arrivals, departures, served, legs
-
-    def _evaluate(self, X, out, *args, **kwargs):
-        N        = self.Ndems
-        pop_size = len(X)
-        F        = np.zeros((pop_size, self.n_obj))
-
-        for idx in range(pop_size):
-            x = X[idx]
-            arrivals, departures, served, legs = self._decode_order(x)
-            served_mask = served > 0
-
-            F[idx, 0] = self.compute_dv(legs)
-            F[idx, 1] = float(len(np.unique(served[served_mask]))) if served_mask.any() else 0.0
-            F[idx, 2] = float(np.sum(self.asset_values[~served_mask]))
-
-        out["F"] = F
-
 
 # ── Random-keys problem (N encoding, no repair, standard SBX+PM operators) ───
 
@@ -757,17 +228,18 @@ class OOSProblemRK(OOSProblem):
 class OOSProblemRK_OT(OOSProblemRK):
     """
     NSGA-III with 2N random-keys encoding:
-      x[0:N]  — demand genes:  floor = vehicle (0=unserved), frac = visit order key
-      x[N:2N] — depot genes:   floor = vehicle (0=inactive), frac = insertion key
+      x[0:N]  — demand genes:  floor = vehicle (0=unserved), frac = normalised arrival
+      x[N:2N] — depot genes:   floor = vehicle (0=inactive), frac = normalised arrival
 
-    The decoder merges GA-placed depot visits into each vehicle's visit sequence
-    by fractional key. If the ΔV budget is exceeded on a leg and no depot gene
-    covers it, the demand is dropped (served=0) rather than force-inserting a
-    depot. This makes the GA fully responsible for depot placement: missing depots
-    increase unrecovered value, driving selection toward better placements.
-    A single opt_times pass polishes arrival timing after the topology is built.
+    arrival[i] = frac(x[i]) * T_horizon, where T_horizon = max(deadlines) - max(service_times).
+    departure[i] = arrival[i] + service_time[i].
+    Visit order = sorted by arrival time.  Legs where arr < prev_dep + min_tof
+    or arr + service > deadline are dropped (served=0).  Single cost-table lookup
+    per leg (snap dep/arr to grids); no searching loop, no post-hoc opt_times pass.
 
-    Depot genes are ignored when: already at depot, or no demands follow them.
+    If the ΔV budget is exceeded on a leg and no depot gene covers it, the demand
+    is dropped (served=0).  Depot genes are ignored when: already at depot, or no
+    demands follow them.
     """
 
     def __init__(self, **kwargs):
@@ -779,15 +251,16 @@ class OOSProblemRK_OT(OOSProblemRK):
 
     def _decode_rk2(self, x):
         N = self.Ndems
+        T_horizon = float(np.max(self.deadlines) - np.max(self.service_times))
 
-        # Demand genes
+        # Demand genes: floor = vehicle, frac = normalised arrival time
         vehicle_d = np.floor(x[:N]).astype(int)
-        order_d   = x[:N] - vehicle_d
+        frac_d    = x[:N] - vehicle_d
         served    = vehicle_d.copy()
 
-        # Depot genes
+        # Depot genes: floor = vehicle, frac = normalised arrival time
         vehicle_dep = np.floor(x[N:]).astype(int)
-        order_dep   = x[N:] - vehicle_dep
+        frac_dep    = x[N:] - vehicle_dep
 
         arrivals   = np.zeros(N)
         departures = np.zeros(N)
@@ -799,15 +272,13 @@ class OOSProblemRK_OT(OOSProblemRK):
             dem_idx = np.where(vehicle_d == v)[0]
             if len(dem_idx) == 0:
                 continue
-            dem_sorted = dem_idx[np.argsort(order_d[dem_idx])]
-            dem_keys   = order_d[dem_sorted]
+            dem_sorted = dem_idx[np.argsort(frac_d[dem_idx])]
 
-            dep_idx  = np.where(vehicle_dep == v)[0]
-            dep_keys = order_dep[dep_idx]
+            dep_idx = np.where(vehicle_dep == v)[0]
 
-            # Merged sequence: (key, type, index)
-            sequence = [(k, 'D', i) for k, i in zip(dem_keys, dem_sorted)]
-            sequence += [(k, 'R', j) for k, j in zip(dep_keys, dep_idx)]
+            # Merged sequence sorted by arrival time
+            sequence = [(frac_d[i] * T_horizon, 'D', i) for i in dem_sorted]
+            sequence += [(frac_dep[j] * T_horizon, 'R', j) for j in dep_idx]
             sequence.sort(key=lambda t: t[0])
 
             # Precompute whether any demand follows each position
@@ -825,19 +296,20 @@ class OOSProblemRK_OT(OOSProblemRK):
             veh = {'sat_ids': [self.depot_id], 'arrivals': [0.0],
                    'departures': [0.0], 'costs': [0.0], 'demand_idxs': [-1]}
 
-            for pos, (key, stype, idx) in enumerate(sequence):
+            for pos, (arr_raw, stype, idx) in enumerate(sequence):
 
                 if stype == 'R':
-                    # Skip if already at depot or no future demands
                     if state_sat == self.depot_id or not has_future_demand[pos]:
                         continue
 
-                    key_to  = (state_sat, self.depot_id)
-                    tof_to  = self.min_tof_table[key_to][0] if key_to in self.min_tof_table else 0.0
-                    dep_s   = float(self.dep_grid[np.searchsorted(self.dep_grid, state_dep).clip(0, len(self.dep_grid) - 1)])
+                    key_to = (state_sat, self.depot_id)
+                    tof_to = self.min_tof_table[key_to][0] if key_to in self.min_tof_table else 0.0
+                    earliest_dep = max(arr_raw, state_dep + tof_to)
+
+                    dep_s = float(self.dep_grid[np.searchsorted(self.dep_grid, state_dep).clip(0, len(self.dep_grid) - 1)])
                     arr_dep = None
                     dv_dep  = np.inf
-                    for ai in range(int(np.searchsorted(self.arr_grid, state_dep + tof_to).clip(0, len(self.arr_grid) - 1)), len(self.arr_grid)):
+                    for ai in range(int(np.searchsorted(self.arr_grid, earliest_dep).clip(0, len(self.arr_grid) - 1)), len(self.arr_grid)):
                         a_cand = float(self.arr_grid[ai])
                         c = self.cost_table.get((state_sat, self.depot_id, dep_s, a_cand), np.inf)
                         if not np.isinf(c) and c <= self.dv_budget:
@@ -867,10 +339,12 @@ class OOSProblemRK_OT(OOSProblemRK):
 
                     key_dir = (state_sat, sid)
                     tof_dir = self.min_tof_table[key_dir][0] if key_dir in self.min_tof_table else 0.0
-                    dep_s   = float(self.dep_grid[np.searchsorted(self.dep_grid, state_dep).clip(0, len(self.dep_grid) - 1)])
+                    earliest = max(arr_raw, state_dep + tof_dir)
+
+                    dep_s = float(self.dep_grid[np.searchsorted(self.dep_grid, state_dep).clip(0, len(self.dep_grid) - 1)])
                     arr     = None
                     dv_dir  = np.inf
-                    for ai in range(int(np.searchsorted(self.arr_grid, state_dep + tof_dir).clip(0, len(self.arr_grid) - 1)), len(self.arr_grid)):
+                    for ai in range(int(np.searchsorted(self.arr_grid, earliest).clip(0, len(self.arr_grid) - 1)), len(self.arr_grid)):
                         a_cand = float(self.arr_grid[ai])
                         if a_cand + self.service_times[i] > self.deadlines[i]:
                             break
@@ -883,35 +357,30 @@ class OOSProblemRK_OT(OOSProblemRK):
                         served[i] = 0
                         continue
 
-                    new_cum = (dv_dir if state_sat == self.depot_id else cum_dv + dv_dir)
+                    new_cum = dv_dir if state_sat == self.depot_id else cum_dv + dv_dir
 
-                    # Budget exceeded and no GA depot covered it → drop demand
                     if new_cum > self.dv_budget and state_sat != self.depot_id:
                         served[i] = 0
                         continue
-                    else:
-                        legs.append((state_sat, sid, dep_s, arr))
-                        total_dv += dv_dir
 
-                        veh['sat_ids'].append(sid)
-                        veh['arrivals'].append(arr)
-                        veh['departures'].append(arr + self.service_times[i])
-                        veh['costs'].append(dv_dir)
-                        veh['demand_idxs'].append(i)
+                    legs.append((state_sat, sid, dep_s, arr))
+                    total_dv += dv_dir
 
-                        state_sat = sid
-                        state_dep = arr + self.service_times[i]
-                        cum_dv    = new_cum
+                    veh['sat_ids'].append(sid)
+                    veh['arrivals'].append(arr)
+                    veh['departures'].append(arr + self.service_times[i])
+                    veh['costs'].append(dv_dir)
+                    veh['demand_idxs'].append(i)
 
                     arrivals[i]   = arr
-                    departures[i] = state_dep
+                    departures[i] = arr + self.service_times[i]
+
+                    state_sat = sid
+                    state_dep = arr + self.service_times[i]
+                    cum_dv    = new_cum
 
             if len(veh['sat_ids']) > 1:
                 vehicles.append(veh)
-
-        # Single opt_times pass to polish arrival timing
-        if vehicles:
-            total_dv = self._opt_times_pass(vehicles)
 
         return arrivals, departures, served, legs, total_dv
 
@@ -1236,78 +705,3 @@ class OOSProblemRK_OT(OOSProblemRK):
         return F_out
 
 
-class OOSCrossoverDecoder(Crossover):
-    """Crossover for 2N decoder encoding: SBX on visit_order, uniform on vehicle_assignments."""
-
-    def __init__(self, eta=20, prob=0.9, **kwargs):
-        super().__init__(n_parents=2, n_offsprings=2, prob=prob, **kwargs)
-        self.eta = eta
-
-    def _do(self, problem, X, **kwargs):
-        _, n_matings, _ = X.shape
-        N   = problem.Ndems
-        Y   = np.empty_like(X)
-
-        for k in range(n_matings):
-            p1, p2 = X[0, k], X[1, k]
-            c1, c2 = p1.copy(), p2.copy()
-
-            # SBX on visit_order keys
-            c1[0:N], c2[0:N] = _sbx(p1[0:N], p2[0:N],
-                                      problem.xl[0:N], problem.xu[0:N], self.eta)
-            # Uniform on vehicle_assignments
-            mask     = np.random.rand(N) < 0.5
-            c1[N:2*N] = np.where(mask, p1[N:2*N], p2[N:2*N])
-            c2[N:2*N] = np.where(mask, p2[N:2*N], p1[N:2*N])
-
-            Y[0, k], Y[1, k] = c1, c2
-        return Y
-
-
-class OOSMutationDecoder(Mutation):
-    """Mutation for 2N decoder encoding: PM on visit_order, random-int on vehicle_assignments."""
-
-    def __init__(self, eta=20, prob_var=None, **kwargs):
-        super().__init__(prob=1.0, **kwargs)
-        self.eta      = eta
-        self.prob_var = prob_var
-
-    def _do(self, problem, X, **kwargs):
-        N   = problem.Ndems
-        p   = self.prob_var if self.prob_var is not None else 1.0 / problem.n_var
-        Y   = X.copy()
-
-        for i in range(len(X)):
-            # PM on visit_order keys
-            mask = np.random.rand(N) < p
-            if mask.any():
-                Y[i, 0:N][mask] = _pm(X[i, 0:N][mask],
-                                       problem.xl[0:N][mask],
-                                       problem.xu[0:N][mask], self.eta)
-            # Random integer replacement for vehicle_assignments
-            mask = np.random.rand(N) < p
-            if mask.any():
-                Y[i, N:2*N][mask] = np.random.randint(
-                    0, int(problem.maxV) + 1, int(mask.sum())
-                ).astype(float)
-        return Y
-
-
-class MOPSO_CD_Repair(MOPSO_CD):
-    """MOPSO_CD with OOSRepair injected after each position update."""
-
-    def __init__(self, repair=None, **kwargs):
-        super().__init__(**kwargs)
-        self._oos_repair = repair
-
-    def _initialize_infill(self):
-        pop = super()._initialize_infill()
-        if self._oos_repair is not None:
-            pop = self._oos_repair.do(self.problem, pop)
-        return pop
-
-    def _infill(self):
-        off = super()._infill()
-        if self._oos_repair is not None:
-            off = self._oos_repair.do(self.problem, off)
-        return off

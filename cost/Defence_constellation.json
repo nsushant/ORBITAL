@@ -1,0 +1,146 @@
+{
+  "T0": {
+    "tracking": {
+      "units": 8,
+      "manufacturing_cost_usd_million": 46.6,
+      "launch_cost_usd_million": 6.54,
+      "orbit": {
+        "altitude_km": 1000,
+        "semi_major_axis_km": 7371,
+        "inclination_deg": 81,
+        "planes": 2,
+        "sats_per_plane": 4,
+        "raan_deg": [0, 180],
+        "raan_status": "assumed"
+      }
+    },
+    "transport": {
+      "units": 20,
+      "manufacturing_cost_usd_million": 14.2,
+      "launch_cost_usd_million": 6.54,
+      "orbit": {
+        "altitude_km": 1000,
+        "semi_major_axis_km": 7371,
+        "inclination_deg": 81,
+        "planes": 2,
+        "sats_per_plane": 10,
+        "raan_deg": [0, 180],
+        "raan_status": "assumed"
+      }
+    }
+  },
+
+  "T1": {
+    "tracking": {
+      "units": 39,
+      "manufacturing_cost_usd_million": 46.6,
+      "launch_cost_usd_million": 5.085,
+      "orbit": {
+        "altitude_km": 1000,
+        "semi_major_axis_km": 7371,
+        "inclination_deg": 81,
+        "planes": 5,
+        "sats_per_plane": "7-8",
+        "raan_deg": [0, 72, 144, 216, 288],
+        "raan_status": "assumed"
+      }
+    },
+    "transport": {
+      "units": 126,
+      "manufacturing_cost_usd_million": 14.2,
+      "launch_cost_usd_million": 5.085,
+      "orbit": {
+        "altitude_km": 1000,
+        "semi_major_axis_km": 7371,
+        "inclination_deg": 81,
+        "planes": 6,
+        "sats_per_plane": 21,
+        "raan_deg": [0, 60, 120, 180, 240, 300],
+        "raan_status": "assumed"
+      }
+    }
+  },
+
+  "T2": {
+    "tracking": {
+      "units": 54,
+      "manufacturing_cost_usd_million": 46.6,
+      "launch_cost_usd_million": 9.05,
+      "orbit": {
+        "altitude_km": 1000,
+        "semi_major_axis_km": 7371,
+        "inclination_deg": 81,
+        "planes": 6,
+        "sats_per_plane": 9,
+        "raan_deg": [0, 60, 120, 180, 240, 300],
+        "raan_status": "assumed"
+      }
+    },
+    "transport_alpha": {
+      "units": 100,
+      "manufacturing_cost_usd_million": 13.28,
+      "launch_cost_usd_million": 4.18,
+      "orbit": {
+        "altitude_km": 950,
+        "semi_major_axis_km": 7321,
+        "inclination_deg": {
+          "low": 81,
+          "high": 81
+        },
+        "planes": {
+          "low_inclination": 4,
+          "high_inclination": 6
+        },
+        "sats_per_plane": {
+          "low_inclination": 19,
+          "high_inclination": 4
+        },
+        "raan_deg": {
+          "low_inclination": [0, 90, 180, 270],
+          "high_inclination": [0, 60, 120, 180, 240, 300]
+        },
+        "raan_status": "assumed"
+      }
+    },
+    "transport_beta": {
+      "units": 90,
+      "manufacturing_cost_usd_million": 22.93,
+      "launch_cost_usd_million": 4.18,
+      "orbit": {
+        "altitude_km": 950,
+        "semi_major_axis_km": 7321,
+        "inclination_deg": 80,
+        "planes": 8,
+        "sats_per_plane": "9-12",
+        "raan_deg": [0, 45, 90, 135, 180, 225, 270, 315],
+        "raan_status": "assumed"
+      }
+    },
+    "transport_gamma": {
+      "units": 10,
+      "manufacturing_cost_usd_million": 17.0,
+      "launch_cost_usd_million": 4.18,
+      "orbit": {
+        "altitude_km": 950,
+        "semi_major_axis_km": 7321,
+        "inclination_deg": 80,
+        "planes": 1,
+        "sats_per_plane": 10,
+        "raan_deg": [0],
+        "raan_status": "assumed"
+      }
+    }
+  },
+
+  "orbital_parameter_conventions": {
+    "earth_radius_km": 6371,
+    "semi_major_axis_formula": "a = Earth_radius + altitude",
+    "eccentricity": 0,
+    "source": "GAO original T0–T2 quantities as of July 2025 (447 satellites). Manufacturing from GAO missile-warning Table 3. Launch from federal spending / SDA award estimates (per satellite). T0 and T1 have no Transport vs Tracking launch split.",
+    "raan_method": "Evenly spaced RAANs over the published span. Not operational SDA RAANs.",
+    "ground_segment_usd_million": 816,
+    "satellite_manufacturing_total_usd_million": 10343,
+    "satellite_launch_total_usd_million": 2346.845,
+    "replacement_value": "manufacturing + launch per satellite. Launch: T0 $6.54M; T1 $5.085M; T2 Tracking $9.05M; T2 Transport (Alpha/Beta/Gamma) $4.18M."
+  }
+}

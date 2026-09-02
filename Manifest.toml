@@ -2,7 +2,7 @@
 
 julia_version = "1.12.1"
 manifest_format = "2.0"
-project_hash = "722044d48b7d938ea4b45980e354879e5053cf7c"
+project_hash = "4a222017b9087876852336ba901fa48088aa251d"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1203,6 +1203,24 @@ version = "2025.5.20"
 git-tree-sha1 = "cac9cc5499c25554cba55cd3c30543cff5ca4fab"
 uuid = "46d2c3a1-f734-5fdb-9937-b9b9aeba4221"
 version = "0.2.4"
+
+[[deps.NLopt]]
+deps = ["CEnum", "NLopt_jll"]
+git-tree-sha1 = "624785b15005a0e0f4e462b27ee745dbe5941863"
+uuid = "76087f3c-5699-56af-9a33-bf431cd00edd"
+version = "1.2.1"
+
+    [deps.NLopt.extensions]
+    NLoptMathOptInterfaceExt = ["MathOptInterface"]
+
+    [deps.NLopt.weakdeps]
+    MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
+
+[[deps.NLopt_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "afe9c70ead884bf4cbb887f188d2db6d8f09d49c"
+uuid = "079eb43e-fd8e-5478-9966-2cf3e3edb778"
+version = "2.11.0+0"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]

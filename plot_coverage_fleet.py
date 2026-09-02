@@ -1,75 +1,37 @@
 """
-plot_coverage_fleet.py — Fleet size vs coverage, client BCR, and operator BCR (three panels).
+plot_coverage_fleet.py — Fleet size vs implied-contract BCR* and F* per client.
 
-Left panel:   fleet size vs demand coverage %
-Middle panel: fleet size vs client BCR
-Right panel:  fleet size vs operator BCR
-              band = range over dry masses 50–1000 kg (BCR>1 regime from mass trade study)
+For each fleet size, pick the cheapest mutually viable equal-BCR contract:
+argmin F* among points with BCR* >= 1. F* equalizes client and operator BCR;
+BCR* is that common value. Slices with no viable point are omitted (nan).
 
-Client BCR   = recovered / (0.1 * recovered + f2)
-Operator BCR = 0.1 * recovered / mission_costs(m_dry)
-
-Run: python plot_coverage_fleet.py --h5 outputs/long_horizon_results.h5
+Run: python plot_coverage_fleet.py --h5 outputs/long_horizon_results_edelbaum.h5
 """
 
-import os, math, argparse
+import os, argparse
 import numpy as np
 import h5py
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from bcr_model import (
+    unpack_front, min_viable_contract, client_label, DV_BUDGET, M_DRY,
+)
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--h5",       default="outputs/long_horizon_results.h5")
+parser.add_argument("--h5",       default="outputs/long_horizon_results_edelbaum.h5")
 parser.add_argument("--out-dir",  default="outputs")
 parser.add_argument("--scenario", default="bcr_mixed")
 args = parser.parse_args()
 os.makedirs(args.out_dir, exist_ok=True)
 
-BUDGETS      = [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000]
-OPERATOR_FEE = 0.10
+BUDGETS = [int(DV_BUDGET)]
+MAX_F3  = 50
+COLORS  = ["#2ca02c", "#1f77b4", "#ff7f0e", "#d62728"]
 
-# ---------------------------------------------------------------------------
-# BCR constants and helpers (operator, mass-dependent)
-# ---------------------------------------------------------------------------
-G0          = 9.80665
-ISP_XE      = 2800.0
-VE_XE       = ISP_XE * G0
-XE_COST     = 340.0
-F9_COST     = 74_000_000.0
-F9_CAPACITY = 22_000.0
-MARKET_RATE = F9_COST / F9_CAPACITY
-INFLATION   = 2.005
-ALPHA       = 0.6
-
-M_DRY = 150.0   # kg — representative servicer dry mass
-
-def sscm_unit_cost(m_dry, N):
-    c_bus   = 781.0 + 26.1 * (m_dry ** 1.261)
-    c_total = c_bus * 1000.0 * INFLATION * (1.0 + ALPHA)
-    nre     = 0.6 * c_total
-    rc1     = 0.4 * c_total
-    return nre / N + rc1 * (N ** (-0.578))
-
-def operator_bcr(f1, f2, f3, dv, tdv, m_dry):
-    n      = max(1, int(round(f3)))
-    m_prop = m_dry * (math.exp(dv / VE_XE) - 1.0)
-    m_wet  = m_dry + m_prop
-    rec    = max(0.0, tdv - f2)
-    costs  = (f3 * m_wet * MARKET_RATE
-              + (f1 / dv) * m_prop * XE_COST
-              + f3 * sscm_unit_cost(m_dry, n))
-    return OPERATOR_FEE * rec / costs if costs > 0 else np.nan
-
-# ---------------------------------------------------------------------------
-# Load all Pareto solutions — group by f3
-# ---------------------------------------------------------------------------
-coverage_by_f3    = defaultdict(list)
-client_bcr_by_f3  = defaultdict(list)
-op_bcr_raw_by_f3  = defaultdict(list)   # f3 -> list of (f1, f2, tdv, dv)
-
+all_by_f3 = defaultdict(list)
+clients = []
 with h5py.File(args.h5, "r") as f:
     for b in BUDGETS:
         path = f"mdls/{args.scenario}_{b}"
@@ -77,97 +39,90 @@ with h5py.File(args.h5, "r") as f:
             continue
         grp = f[path]
         for tk in sorted(grp.keys()):
-            ds   = grp[tk]
-            data = ds[:]
-            if data.shape[0] == 3 and data.shape[1] != 3:
-                data = data.T
-            tdv  = float(ds.attrs.get("total_demand_value", 0.0))
+            front = unpack_front(grp[tk])
+            data, tdv = front["data"], front["tdv"]
             if tdv <= 0:
                 continue
+            if not clients:
+                clients = list(front["clients"])
             data = data[data[:, 0] < 1e6]
             for row in data:
-                f1, f2, f3 = row
-                recovered  = max(0.0, tdv - f2)
-                cov        = recovered / tdv * 100.0
-                oos_fee    = OPERATOR_FEE * recovered
-                remaining  = max(0.0, f2)
-                denom      = oos_fee + remaining
-                client_bcr = recovered / denom if denom > 0 else np.nan
+                key = int(round(row[2]))
+                if key < 1 or key > MAX_F3:
+                    continue
+                all_by_f3[key].append((row, tdv, float(b), front))
 
-                key = int(round(f3))
-                coverage_by_f3[key].append(cov)
-                if not np.isnan(client_bcr):
-                    client_bcr_by_f3[key].append(client_bcr)
-                op_bcr_raw_by_f3[key].append((f1, f2, tdv, float(b)))
+if not all_by_f3:
+    raise SystemExit(f"No solutions in {args.h5} for {args.scenario}_*")
+if not clients:
+    raise SystemExit("No per-client columns — re-run MDLS after sat_clients.json")
 
-f3_vals = sorted(set(coverage_by_f3.keys()) & set(client_bcr_by_f3.keys()))
+bcr_by = {c: defaultdict(list) for c in clients}
+F_by   = {c: defaultdict(list) for c in clients}
 
-# ---------------------------------------------------------------------------
-# Compute operator BCR band by sweeping M_DRY_RANGE for each f3
-# ---------------------------------------------------------------------------
-op_bcr_by_f3 = {}
-for f3 in f3_vals:
-    all_bcrs = []
-    for (f1, f2, tdv, dv) in op_bcr_raw_by_f3[f3]:
-        b = operator_bcr(f1, f2, f3, dv, tdv, M_DRY)
-        if not np.isnan(b):
-            all_bcrs.append(b)
-    op_bcr_by_f3[f3] = all_bcrs if all_bcrs else [0.0]
+for key, recs in all_by_f3.items():
+    by_trial = defaultdict(list)
+    for rec in recs:
+        by_trial[id(rec[3])].append(rec)
+    for trial_recs in by_trial.values():
+        rows = np.array([r[0] for r in trial_recs], dtype=float)
+        front = trial_recs[0][3]
+        b = trial_recs[0][2]
+        picked = min_viable_contract(front, b, M_DRY, data=rows)
+        for c in clients:
+            s = picked.get(c)
+            if s is None or not s["viable"]:
+                continue
+            bcr_by[c][key].append(s["bcr"])
+            F_by[c][key].append(s["F"] / 1e6)
 
-# ---------------------------------------------------------------------------
-# Band statistics
-# ---------------------------------------------------------------------------
-def band_stats(by_f3):
-    mean = np.array([np.mean(by_f3[f3])           for f3 in f3_vals])
-    lo   = np.array([np.min(by_f3[f3])            for f3 in f3_vals])
-    hi   = np.array([np.max(by_f3[f3])            for f3 in f3_vals])
-    p25  = np.array([np.percentile(by_f3[f3], 25) for f3 in f3_vals])
-    p75  = np.array([np.percentile(by_f3[f3], 75) for f3 in f3_vals])
-    return mean, lo, hi, p25, p75
+f3_vals = sorted(set().union(*(bcr_by[c].keys() for c in clients)))
+if not f3_vals:
+    raise SystemExit("No fleet size has BCR* >= 1")
+print(f"Viable fleet sizes: {min(f3_vals)} – {max(f3_vals)}  clients={clients}")
+for c in clients:
+    n_ok = sum(len(bcr_by[c][k]) for k in f3_vals)
+    print(f"  {c}: {n_ok} viable (f3, trial) picks")
 
-cov_mean, cov_lo, cov_hi, cov_p25, cov_p75 = band_stats(coverage_by_f3)
-bcr_mean, bcr_lo, bcr_hi, bcr_p25, bcr_p75 = band_stats(client_bcr_by_f3)
-op_mean = np.array([np.mean(op_bcr_by_f3[f3]) for f3 in f3_vals])
-op_lo   = np.array([np.min(op_bcr_by_f3[f3])  for f3 in f3_vals])
-op_hi   = np.array([np.max(op_bcr_by_f3[f3])  for f3 in f3_vals])
 
-print(f"Fleet sizes: {min(f3_vals)} – {max(f3_vals)}")
-print(f"Total solutions: {sum(len(v) for v in coverage_by_f3.values())}")
+def band(by_f3, keys):
+    mean, lo, hi = [], [], []
+    for k in keys:
+        vals = [v for v in by_f3.get(k, []) if np.isfinite(v)]
+        if not vals:
+            mean.append(np.nan); lo.append(np.nan); hi.append(np.nan)
+        else:
+            mean.append(np.mean(vals)); lo.append(np.min(vals)); hi.append(np.max(vals))
+    return np.array(mean), np.array(lo), np.array(hi)
 
-# ---------------------------------------------------------------------------
-# Plot: three panels
-# ---------------------------------------------------------------------------
-FS     = 20
+
+FS = 18
 f3_arr = np.array(f3_vals)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+for i, c in enumerate(clients):
+    col = COLORS[i % len(COLORS)]
+    mean, lo, hi = band(bcr_by[c], f3_vals)
+    ax1.fill_between(f3_arr, lo, hi, alpha=0.15, color=col)
+    ax1.plot(f3_arr, mean, color=col, linewidth=2.5, label=client_label(c))
+    Fm, Flo, Fhi = band(F_by[c], f3_vals)
+    ax2.fill_between(f3_arr, Flo, Fhi, alpha=0.15, color=col)
+    ax2.plot(f3_arr, Fm, color=col, linewidth=2.5, label=client_label(c))
 
-# --- Left: coverage vs fleet size ---
-ax1.fill_between(f3_arr, cov_lo,  cov_hi,  alpha=0.15, color="#1f77b4", label="Min–Max")
-ax1.fill_between(f3_arr, cov_p25, cov_p75, alpha=0.35, color="#1f77b4", label="IQR")
-ax1.plot(f3_arr, cov_mean, color="#1f77b4", linewidth=2.5, label="Mean")
+ax1.axhline(1.0, color="black", linestyle="--", linewidth=1.5)
 ax1.set_xlabel("Fleet size (number of servicers)", fontsize=FS)
-ax1.set_ylabel("Demand coverage [%]", fontsize=FS)
+ax1.set_ylabel("BCR*", fontsize=FS)
 ax1.tick_params(labelsize=FS - 2)
-ax1.set_xlim(f3_arr[0], f3_arr[-1])
+ax1.set_xlim(1, MAX_F3)
 ax1.set_ylim(bottom=0)
-ax1.legend(fontsize=FS - 2)
+ax1.legend(fontsize=FS - 4)
 
-# --- Right: client BCR and operator BCR vs fleet size ---
-ax2.fill_between(f3_arr, bcr_lo,  bcr_hi,  alpha=0.15, color="#2ca02c")
-ax2.fill_between(f3_arr, bcr_p25, bcr_p75, alpha=0.35, color="#2ca02c")
-ax2.plot(f3_arr, bcr_mean, color="#2ca02c", linewidth=2.5, label="Client BCR")
-
-ax2.fill_between(f3_arr, op_lo, op_hi, alpha=0.15, color="#d62728")
-ax2.plot(f3_arr, op_mean, color="#d62728", linewidth=2.5, label="Operator BCR (150 kg)")
-
-ax2.axhline(1.0, color="black", linestyle="--", linewidth=1.5)
 ax2.set_xlabel("Fleet size (number of servicers)", fontsize=FS)
-ax2.set_ylabel("BCR", fontsize=FS)
+ax2.set_ylabel("Implied contract F* [$M]", fontsize=FS)
 ax2.tick_params(labelsize=FS - 2)
-ax2.set_xlim(f3_arr[0], f3_arr[-1])
+ax2.set_xlim(1, MAX_F3)
 ax2.set_ylim(bottom=0)
-ax2.legend(fontsize=FS - 2)
+ax2.legend(fontsize=FS - 4)
 
 fig.tight_layout()
 outpath = os.path.join(args.out_dir, "coverage_vs_fleet.pdf")

@@ -17,10 +17,11 @@ trial_num     = parse(Int, ARGS[2])
 
 const GATESTS_INCLUDE = true
 include("algoMDLS.jl")
+include("bcr_clients.jl")
 
 using JLD2
 
-const MDLS_ITERS   = 3334   # 3 ops/iter × 3334 ≈ 10 000 evals
+const MDLS_ITERS   = 1000
 const N_VEHICLES   = 100
 const REFUEL_TIME  = 0.5    # days — must match GA (run_ga_trial.py)
 
@@ -40,15 +41,26 @@ local demands
 @load dem_path demands
 demands["UIDs"] = collect(1:length(demands["sat_identifiers"]))
 
-@info "Loading Starlink tables …"
-ct     = load(joinpath(@__DIR__, "outputs", "cost_table.jld2"), "CostTable")
+@info "Loading cost tables …"
+ct_path     = get(ENV, "COST_TABLE_PATH", joinpath(@__DIR__, "outputs", "cost_table.jld2"))
+pt_path     = get(ENV, "PHASING_TABLE_PATH", joinpath(@__DIR__, "outputs", "phasing_time_table.jld2"))
+mintof_path = get(ENV, "MIN_TOF_PATH", nothing)
+
+ct     = load(ct_path, "CostTable")
 n_sats = maximum(k[1] for k in keys(ct))
-mintof = build_min_tof_table()
+mintof = if mintof_path === nothing
+    build_min_tof_table()
+elseif isfile(mintof_path)
+    load(mintof_path, "MinTOFTable")
+else
+    build_min_tof_table(; ct_path=ct_path, pt_path=pt_path, out_path=mintof_path, force=true)
+end
 min_dv = build_min_dv_table(ct, n_sats)
 sim    = load_sim()
+@info "Tables loaded" ct_path n_entries=length(ct)
 
 @info "Building greedy warm start …"
-init_sol, init_unas = make_init_schedule(demands, sim; nvehicles=N_VEHICLES, refuel_time=REFUEL_TIME, dv_budget=DV_BUDGET)
+init_sol, init_unas = make_init_schedule(demands, sim; nvehicles=N_VEHICLES, refuel_time=REFUEL_TIME, dv_budget=DV_BUDGET, min_tof_table=mintof)
 
 @info "Running MDLS" scenario=scenario_name trial=trial_num iters=MDLS_ITERS
 t0 = time()
@@ -61,37 +73,36 @@ elapsed = time() - t0
 
 @info "MDLS done" elapsed_sec=round(elapsed; digits=1) n_solutions=length(archive.solutions)
 
-outpath = joinpath(RES_DIR, "mdls_$(scenario_name)_$(trial_str).csv")
-rows = [(archive.total_deltaV[i],
-         archive.total_serv_time_unassigned[i],
-         archive.total_vehicles_used[i])
-        for i in eachindex(archive.solutions)
-        if archive.total_deltaV[i] < INFEASIBLE_LEG_COST]
+sat_clients = load_sat_clients(sim=sim)
+client_ids  = ordered_client_ids(sat_clients)
+tdv_k       = demand_client_tdv(demands, sat_clients)
+data, valid = client_front_matrix(archive, sat_clients, client_ids)
 
+outpath = joinpath(RES_DIR, "mdls_$(scenario_name)_$(trial_str).csv")
 open(outpath, "w") do io
-    println(io, "f1_dv,f2_unrecovered_value,f3_vehicles")
-    for (dv, us, veh) in rows
-        println(io, "$(round(dv; digits=4)),$(round(us; digits=6)),$veh")
+    println(io, client_column_names(client_ids))
+    for j in 1:size(data, 2)
+        print(io, join((round(data[r, j]; digits=6) for r in 1:size(data, 1)), ","))
+        println(io)
     end
 end
-@info "Saved front" path=outpath valid=length(rows) elapsed_sec=round(elapsed; digits=1)
+@info "Saved front" path=outpath valid=size(data, 2) elapsed_sec=round(elapsed; digits=1) clients=client_ids
 
-if H5_FILE !== nothing && !isempty(rows)
+if H5_FILE !== nothing && size(data, 2) > 0
     using HDF5
-    data = Matrix{Float64}(undef, length(rows), 3)
-    for (i, (dv, us, veh)) in enumerate(rows)
-        data[i, 1] = dv
-        data[i, 2] = us
-        data[i, 3] = Float64(veh)
-    end
     group_path = "mdls/$(scenario_name)/trial_$(trial_str)"
     total_demand_value = haskey(demands, "asset_values") ?
         sum(demands["asset_values"]) : 0.0
     h5open(H5_FILE, "cw") do fid
         haskey(fid, group_path) && delete_object(fid, group_path)
-        fid[group_path] = collect(data')
-        attrs(fid[group_path])["columns"]            = "f1_dv,f2_unrecovered_value,f3_vehicles"
+        fid[group_path] = data
+        attrs(fid[group_path])["columns"]            = client_column_names(client_ids)
         attrs(fid[group_path])["total_demand_value"] = total_demand_value
+        attrs(fid[group_path])["clients"]            = join(client_ids, ",")
+        attrs(fid[group_path])["fee_model"]          = "implied_contract"
+        for c in client_ids
+            attrs(fid[group_path])["total_demand_value_$(c)"] = get(tdv_k, c, 0.0)
+        end
     end
     @info "Saved to HDF5" path=H5_FILE group=group_path
 end

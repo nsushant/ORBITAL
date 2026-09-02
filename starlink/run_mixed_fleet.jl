@@ -94,6 +94,16 @@ open("outputs/mixed_sat_types.json", "w") do f
     types_str = Dict(k => string(v) for (k, v) in pl_types)
     JSON3.write(f, types_str)
 end
+sat_clients = Dict{String,String}()
+for sat in sl_sats_only
+    sat_clients[sat.name] = "starlink"
+end
+for sat in pl_sats
+    sat_clients[sat.name] = "planet"
+end
+open("outputs/sat_clients.json", "w") do f
+    JSON3.write(f, sat_clients)
+end
 
 @info "Mixed-fleet setup complete"
 println()
@@ -103,6 +113,7 @@ println("    outputs/simulation.h5       (mixed-fleet simulation)")
 println("    outputs/mixed_sat_values.json")
 println("    outputs/mixed_launch_dates.json")
 println("    outputs/mixed_sat_types.json")
+println("    outputs/sat_clients.json")
 println()
 println("Next:")
 println("  julia --project=. -t auto starlink/extend_cost_table.jl")

@@ -32,44 +32,58 @@ end
 # ── Main entry point ───────────────────────────────────────────────────────────
 """
     generate_demands(simulation, demand_params)
-        → (sat_identifiers, demand_deadlines, service_times)
+        → Dict with sat_identifiers, demand_deadlines, available_times, service_times
 
 Generate service demands for satellites within a ΔV range from the depot.
 
 # Required keys in `demand_params`
 | Key             | Type              | Description |
 |-----------------|-------------------|-------------|
-| `"num_demands"` | Int               | Total demands to generate |
 | `"deltaV_dist"` | Float64           | Max ΔV from depot [m/s] — filters candidate sats |
-| `"time_dist"`   | [t_min, t_max]    | Deadline range [days] |
 | `"service_times"` | [s_min, s_max]  | Service time range [days] |
 | `"disttype"`    | String            | "normal" or "uniform" |
 | `"seed"`        | Int               | RNG seed for reproducibility |
 
+Either `"num_demands"` + `"time_dist"` (legacy: deadlines in [t_min, t_max],
+ready at t=0) or an epoch profile:
+
+| `"horizon_years"`    | Int        | Number of demand-arrival years |
+| `"demands_per_year"` | [n_lo, n_hi] | Uniform integer draw per year |
+| `"near_window_days"` | [w_lo, w_hi] | Short contract window (default 6–18 mo) |
+| `"far_window_days"`  | [w_lo, w_hi] | Long contract window (default 2–3 yr) |
+| `"far_frac"`         | Float64    | Fraction of demands using the far window |
+
+Epoch demands have `available_times` (ready epoch) and
+`deadline = ready + window`.
+
 # Optional keys
 | Key               | Type | Description |
 |-------------------|------|-------------|
-| `"num_satellites"` | Int | Fix satellite pool size (num_demands >= num_satellites) |
+| `"num_satellites"` | Int | Fix satellite pool size (ignored if ≤ 0) |
 | `"type"`           | String | "random" (default); "physical" reserved for future |
 """
 function generate_demands(simulation, demand_params::Dict;
                           cost_table=nothing) :: Dict{String, Any}
 
     # ── Parse params ──────────────────────────────────────────────────────────
-    num_demands  = Int(demand_params["num_demands"])
+    use_epoch    = haskey(demand_params, "horizon_years")
+    num_demands  = use_epoch ? 0 : Int(demand_params["num_demands"])
     dv_limit     = Float64(demand_params["deltaV_dist"])
-    time_dist    = Float64.(demand_params["time_dist"])        # [t_min, t_max] days
+    time_dist    = haskey(demand_params, "time_dist") ?
+                   Float64.(demand_params["time_dist"]) : [0.0, 0.0]
     svc_range    = Float64.(demand_params["service_times"])    # [s_min, s_max] days
     disttype     = String(demand_params["disttype"])
     seed         = Int(demand_params["seed"])
-    num_sats_opt = get(demand_params, "num_satellites", nothing)
+    num_sats_raw = get(demand_params, "num_satellites", nothing)
+    num_sats_opt = (num_sats_raw === nothing || Int(num_sats_raw) <= 0) ?
+                   nothing : Int(num_sats_raw)
     dem_type     = get(demand_params, "type", "random")
 
     dem_type != "random" &&
         @warn "demand type \"$dem_type\" not yet implemented — falling back to \"random\""
 
-    num_sats_opt !== nothing && num_demands < Int(num_sats_opt) &&
-        error("num_demands ($num_demands) must be >= num_satellites ($(Int(num_sats_opt)))")
+    !use_epoch && num_sats_opt !== nothing && num_demands < num_sats_opt &&
+        error("num_demands ($num_demands) must be >= num_satellites ($num_sats_opt)")
 
     rng = MersenneTwister(seed)
 
@@ -120,7 +134,7 @@ function generate_demands(simulation, demand_params::Dict;
     isempty(candidate_sats) &&
         error("No satellites found within deltaV_dist=$dv_limit m/s from any depot.")
 
-    @info "generate_demands" candidate_sats=length(candidate_sats) num_demands=num_demands disttype=disttype
+    @info "generate_demands" candidate_sats=length(candidate_sats) num_demands=num_demands disttype=disttype use_epoch=use_epoch
 
     # ── Build satellite pool ──────────────────────────────────────────────────
     pool = if num_sats_opt !== nothing
@@ -148,26 +162,13 @@ function generate_demands(simulation, demand_params::Dict;
     end
 
     # ── Generate demands ───────────────────────────────────────────────────────
-    sat_identifiers = Vector{String}(undef, num_demands)
-    demand_deadlines = Vector{Float64}(undef, num_demands)
-    service_times_out = Vector{Float64}(undef, num_demands)
-
-    for k in 1:num_demands
-        # Sample satellite from pool uniformly
-        sat_name = pool[rand(rng, 1:length(pool))]
-
-        # Deadline upper bound — independent of transfer TOF
-        dl_hi = Float64(time_dist[2])
-        dl_lo = Float64(time_dist[1])
-        dl_hi < dl_lo && (dl_hi = dl_lo + 1.0)   # safety floor
-
-        deadline     = sample_from_dist(disttype, dl_lo, dl_hi, 1, rng)[1]
-        service_time = sample_from_dist(disttype, svc_range[1], svc_range[2], 1, rng)[1]
-
-        sat_identifiers[k]    = sat_name
-        demand_deadlines[k]   = deadline
-        service_times_out[k]  = service_time
-    end
+    sat_identifiers, demand_deadlines, available_times, service_times_out =
+        if use_epoch
+            _generate_epoch_demands(pool, demand_params, svc_range, disttype, rng)
+        else
+            _generate_legacy_demands(pool, num_demands, time_dist, svc_range, disttype, rng)
+        end
+    num_demands = length(sat_identifiers)
 
     # Asset values: look up per-satellite value if provided, else default to V1 value
     sat_values_param = get(demand_params, "sat_values", Dict{String,Float64}())
@@ -175,9 +176,13 @@ function generate_demands(simulation, demand_params::Dict;
     asset_values_out = [get(sat_values_param, sat_identifiers[k], default_asset_val)
                         for k in 1:num_demands]
 
+    n_near = count(k -> demand_deadlines[k] - available_times[k] < 600.0, 1:num_demands)
+    @info "demand windows" n=num_demands n_near=n_near n_far=(num_demands - n_near) ready_span=(minimum(available_times), maximum(available_times)) deadline_span=(minimum(demand_deadlines), maximum(demand_deadlines))
+
     demands = Dict{String, Any}(
-        "sat_identifiers" => sat_identifiers,
+        "sat_identifiers"  => sat_identifiers,
         "demand_deadlines" => demand_deadlines,
+        "available_times"  => available_times,
         "service_times"    => service_times_out,
         "asset_values"     => asset_values_out,
         "UIDs"             => collect(1:num_demands)
@@ -193,6 +198,61 @@ function generate_demands(simulation, demand_params::Dict;
 end
 
 
+function _generate_legacy_demands(pool, num_demands, time_dist, svc_range, disttype, rng)
+    sat_identifiers   = Vector{String}(undef, num_demands)
+    demand_deadlines  = Vector{Float64}(undef, num_demands)
+    available_times   = zeros(Float64, num_demands)
+    service_times_out = Vector{Float64}(undef, num_demands)
+
+    dl_lo = Float64(time_dist[1])
+    dl_hi = Float64(time_dist[2])
+    dl_hi < dl_lo && (dl_hi = dl_lo + 1.0)
+
+    for k in 1:num_demands
+        sat_identifiers[k]    = pool[rand(rng, 1:length(pool))]
+        demand_deadlines[k]   = sample_from_dist(disttype, dl_lo, dl_hi, 1, rng)[1]
+        service_times_out[k]  = sample_from_dist(disttype, svc_range[1], svc_range[2], 1, rng)[1]
+    end
+    return sat_identifiers, demand_deadlines, available_times, service_times_out
+end
+
+
+"""
+Yearly arrivals over `horizon_years`. Each year draws n ∈ [n_lo, n_hi] ready
+epochs uniformly in that year; the contract window is near (6–18 months) or
+far (2–3 years). Deadline = ready + window.
+"""
+function _generate_epoch_demands(pool, demand_params, svc_range, disttype, rng)
+    horizon_years = Int(demand_params["horizon_years"])
+    dpy      = Int.(demand_params["demands_per_year"])          # [n_lo, n_hi]
+    near_w   = Float64.(get(demand_params, "near_window_days", [180.0, 548.0]))
+    far_w    = Float64.(get(demand_params, "far_window_days",  [730.0, 1095.0]))
+    far_frac = Float64(get(demand_params, "far_frac", 0.5))
+    year_len = 365.25
+
+    sat_identifiers   = String[]
+    demand_deadlines  = Float64[]
+    available_times   = Float64[]
+    service_times_out = Float64[]
+
+    n_lo, n_hi = extrema(dpy)
+    for y in 0:horizon_years-1
+        n_y = rand(rng, n_lo:n_hi)
+        t0  = y * year_len
+        t1  = t0 + year_len
+        for _ in 1:n_y
+            ready  = t0 + (t1 - t0) * rand(rng)
+            is_far = rand(rng) < far_frac
+            wlo, whi = is_far ? (far_w[1], far_w[2]) : (near_w[1], near_w[2])
+            window = sample_from_dist(disttype, wlo, whi, 1, rng)[1]
+            push!(sat_identifiers,   pool[rand(rng, 1:length(pool))])
+            push!(available_times,   ready)
+            push!(demand_deadlines,  ready + window)
+            push!(service_times_out, sample_from_dist(disttype, svc_range[1], svc_range[2], 1, rng)[1])
+        end
+    end
+    return sat_identifiers, demand_deadlines, available_times, service_times_out
+end
 
 
 function gen_UID(demands)
@@ -226,5 +286,8 @@ function load_demands(filename=nothing) :: Dict{String, Any}
     @load path demands
 
     demands["UIDs"] = gen_UID(demands)
+    n = length(demands["UIDs"])
+    !haskey(demands, "available_times") &&
+        (demands["available_times"] = zeros(Float64, n))
     return demands
 end

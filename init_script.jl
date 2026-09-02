@@ -39,7 +39,7 @@ simulation = gen_simulation([constellation_params,depot_params], sim_params)
 # by default it will creta a HT LT hybrid cost table with lowest cost dv in eah cell 
 # if you want LT only just supply arg type = "LT"
 
-cost_table = gen_cost_table(simulation)
+cost_table = gen_cost_table(simulation; continuous=false)
 
 
 

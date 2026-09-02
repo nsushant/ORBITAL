@@ -215,14 +215,14 @@ parametric constellation definitions.
 
 `sim_params` keys: `"J2"` (Bool), `"dt"` (seconds), `"t_end"` (seconds)
 """
-function gen_simulation_from_sats(sats::Vector{Sat}, sim_params::Dict) :: Simulation
+function gen_simulation_from_sats(sats::Vector{Sat}, sim_params::Dict; prompt::Bool=true) :: Simulation
     use_J2 = Bool(sim_params["J2"])
     dt     = Float64(sim_params["dt"])
     t_end  = Float64(sim_params["t_end"])
 
     mkpath("outputs")
 
-    if isfile(TRAJ_FILE)
+    if prompt && isfile(TRAJ_FILE)
         println("Simulation file found at $TRAJ_FILE. Re-run? (y/n): ")
         choice = strip(readline())
         if choice != "y" && choice != "Y"

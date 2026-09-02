@@ -13,7 +13,7 @@ outputs/hv_boxplots.pdf
 outputs/kde_shadow_{scenario}.pdf
 """
 
-import os, glob
+import os, glob, argparse
 import numpy as np
 import pandas as pd
 import moocore
@@ -30,8 +30,18 @@ ALG_NAMES = ["mdls", "nsga3", "pso"]
 ALG_LABELS = {"mdls": "MDLS", "nsga3": "NSGA-III", "pso": "MOPSO-CD"}
 SCENARIOS  = ["tight_normal", "loose_uniform", "tight_low_dv", "loose_high_dv"]
 N_TRIALS   = 5
-RES_DIR    = "outputs/exp_results"
-OUT_DIR    = "outputs"
+
+# Paths are CLI-overridable so pure / sensitivity results can be aggregated
+# without editing this file. Defaults reproduce the original behaviour.
+#   e.g.  python aggregate_results.py --res-dir outputs/pure_results --out-dir outputs/pure_results
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--res-dir",  default="outputs/exp_results", help="dir with per-trial CSVs")
+_ap.add_argument("--out-dir",  default="outputs",             help="dir for aggregated outputs")
+_ap.add_argument("--n-trials", type=int, default=N_TRIALS)
+_args, _ = _ap.parse_known_args()
+RES_DIR    = _args.res_dir
+OUT_DIR    = _args.out_dir
+N_TRIALS   = _args.n_trials
 PENALTY    = 1e6
 OBJ_COLS   = ["f1_dv", "f2_unrecovered_value", "f3_vehicles"]
 

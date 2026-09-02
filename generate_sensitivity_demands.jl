@@ -11,8 +11,9 @@ include("algoMDLS.jl")
 
 using JLD2, JSON3, Dates
 using Random
+using Statistics
 
-const N_TRIALS    = 5
+const N_TRIALS    = 1
 const REFUEL_TIME = 0.5   # days — must match GA (run_ga_trial.py)
 
 # Optional --outdir=<path> flag (must appear before SE name filters)
@@ -29,7 +30,7 @@ const SE1_LEVELS = [10, 50, 100, 150, 200]
 const SE2_LEVELS = ["normal", "uniform"]
 const SE3_LEVELS = [3000, 5000, 8000, 12000]
 const SE4_LEVELS = [1500.0, 3000.0, 5000.0, 8000.0, 10000.0]
-const SE5_LEVELS = [500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 6000.0, 8000.0]
+const SE5_LEVELS = [7000.0]
 
 # Per-satellite replacement values from SSCM CER (Foreman et al. 2016) + Wright's law
 # (b=0.67, inflation x2.005 FY2000→2026, alpha=0.2 for mature bus)
@@ -37,7 +38,7 @@ const SE5_LEVELS = [500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.
 # V2 Mini: m_dry=776 kg, N=2000 → $1.45M/sat
 const V1_VALUE    = 250_000.0
 const V2_VALUE    = 1_450_000.0
-const DEFAULT_ASSET_VALUE = V1_VALUE
+const DEFAULT_ASSET_VALUE = 463_927.0  # number-weighted avg of 224 satellites from mixed_sat_values.json
 const V2_FRACTION = 0.30        # ~30% of current Starlink fleet is V2 Mini
 const SIM_START_DATE = Date(2024, 1, 1)   # reference epoch for age computation
 
@@ -142,23 +143,22 @@ subexperiments = [
      seed_fn        = (trial, lv) -> trial * 137,
      greedy_dv_fn   = (lv) -> parse(Float64, lv)),
 
-    # SE7 — BCR mixed-fleet sweep: all Starlink + Planet Labs sats, 10k demands, 5-yr horizon
-    # Varies dv_budget; uses per-sat replacement values from mixed_sat_values.json
-    # Requires outputs/simulation.h5 and cost_table.jld2 from run_mixed_fleet.jl
+    # SE7 — BCR mixed-fleet: 60–90 demands/year over 5 years, mixed 6–18 month
+    # and 2–3 year contract windows. Sampled from all catalog sats (no pool cap).
     (name      = "bcr_mixed",
      levels    = [string(Int(v)) for v in SE5_LEVELS],
      base_fn   = (lv) -> begin
-         mixed_vals = isfile("outputs/mixed_sat_values.json") ?
-             Dict{String,Float64}(string(k) => v for (k,v) in JSON3.read(read("outputs/mixed_sat_values.json"))) :
-             Dict{String,Float64}()
-         Dict("num_demands"        => 10000,
-              "type"               => "random",
+         Dict("type"               => "random",
               "disttype"           => "uniform",
-              "deltaV_dist"        => 8000.0,
-              "time_dist"          => [50.0, 1825.0],
+              "deltaV_dist"        => 10000.0,
+              "time_dist"          => [180.0, 1095.0],
               "service_times"      => [1.0, 5.0],
-              "num_satellites"     => 224,
-              "sat_values"         => mixed_vals,
+              "horizon_years"      => 5,
+              "demands_per_year"   => [60, 90],
+              "near_window_days"   => [180.0, 548.0],   # 6–18 months
+              "far_window_days"    => [730.0, 1095.0],  # 2–3 years
+              "far_frac"           => 0.5,
+              "sat_values"         => Dict{String,Float64}(),
               "default_asset_value" => DEFAULT_ASSET_VALUE)
      end,
      seed_fn        = (trial, lv) -> trial * 137,
@@ -197,11 +197,17 @@ total = sum(length(se.levels) * N_TRIALS for se in active_ses)
 done  = Ref(0)
 
 # Load tables once — reused across all sub-experiments and trials
-@info "Loading cost table …"
-CostTable = load("outputs/cost_table.jld2", "CostTable")
+ct_path     = get(ENV, "COST_TABLE_PATH", joinpath(@__DIR__, "outputs", "cost_table.jld2"))
+mintof_path = get(ENV, "MIN_TOF_PATH", nothing)
+@info "Loading cost table …" ct_path
+CostTable = load(ct_path, "CostTable")
 @info "Cost table loaded" n_entries=length(CostTable)
 @info "Building min-TOF table …"
-MinTOFTable = build_min_tof_table()
+MinTOFTable = if mintof_path !== nothing && isfile(mintof_path)
+    load(mintof_path, "MinTOFTable")
+else
+    build_min_tof_table(; ct_path=ct_path)
+end
 
 for se in active_ses
     @info "─── Sub-experiment: $(se.name) ───"
@@ -213,6 +219,11 @@ for se in active_ses
             sat_values_trial = depreciated_sat_values(sim, seed)
 
             params    = merge(se.base_fn(lv), Dict("seed" => seed, "sat_values" => sat_values_trial))
+            if se.name == "bcr_mixed"
+                params = merge(params, Dict(
+                    "default_asset_value" => isempty(_MIXED_SAT_VALUES) ?
+                        DEFAULT_ASSET_VALUE : mean(values(_MIXED_SAT_VALUES))))
+            end
             trial_str = lpad(trial, 2, '0')
             key       = "$(se.name)_$(lv)"
 

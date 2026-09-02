@@ -14,18 +14,15 @@ TRIAL=1
 
 mkdir -p "$RES_DIR"
 
-# Generate demand files if missing
-for budget in 500 1000 1500 2000 2500 3000 4000 5000 6000 8000; do
-    dem="$DEM_DIR/bcr_mixed_${budget}_0${TRIAL}.jld2"
-    if [ ! -f "$dem" ]; then
-        echo "── Generating bcr_mixed demand files (20k demands, mixed fleet, 5-yr) ──"
-        $JULIA generate_sensitivity_demands.jl --outdir="$DEM_DIR" bcr_mixed
-        break
-    fi
-done
+# Generate demand file only if missing
+dem="$DEM_DIR/bcr_mixed_5000_01.jld2"
+if [ ! -f "$dem" ]; then
+    echo "── Generating bcr_mixed demand files (400k demands, mixed fleet, 5-yr) ──"
+    $JULIA generate_sensitivity_demands.jl --outdir="$DEM_DIR" bcr_mixed
+fi
 
 # Run MDLS for each budget level
-for budget in 500 1000 1500 2000 2500 3000 4000 5000 6000 8000; do
+for budget in 5000; do
     echo "── bcr_mixed=$budget  trial=$TRIAL (5-yr horizon, mixed fleet) ──"
     $JULIA run_mdls_trial.jl "bcr_mixed_${budget}" "$TRIAL" "$DEM_DIR" "$RES_DIR" "$budget" "$H5_FILE"
 done

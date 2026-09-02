@@ -36,6 +36,10 @@ const TOF_STEP = 30.0    # days (must match existing cost table resolution)
 const T_END    = 1825.0  # days — 5-year horizon
 const MAX_TOF  = 730.0   # days — max transfer time (2 years, per mission design)
 
+# Cost-table fidelity: true → Section 4.3 continuous-thrust NLP, false → 4.2 impulsive.
+const CONTINUOUS_THRUST = false
+const FMAX_KMS2         = 3.5e-6   # km/s² (paper value; adjust for your servicer)
+
 # ---------------------------------------------------------------------------
 # Load existing tables
 # ---------------------------------------------------------------------------
@@ -96,8 +100,8 @@ new_s2d = filter(k -> k ∉ existing_keys, sat_to_depot_keys)
 # Compute new entries using existing fast builders
 # ---------------------------------------------------------------------------
 
-CT_d2s, PT_d2s = build_cost_table_depot_to_sat_fast(sim, new_d2s, plane_groups)
-CT_s2d, PT_s2d = build_cost_table_sat_to_depot_fast(sim, new_s2d, plane_groups)
+CT_d2s, PT_d2s = build_cost_table_depot_to_sat_fast(sim, new_d2s, plane_groups; continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
+CT_s2d, PT_s2d = build_cost_table_sat_to_depot_fast(sim, new_s2d, plane_groups; continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 
 # ---------------------------------------------------------------------------
 # Merge and save

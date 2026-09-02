@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from bcr_model import objectives3
 
 # ---------------------------------------------------------------------------
 # Config
@@ -107,10 +108,7 @@ def load_fronts(fid, algo, scenario_key):
     grp = fid[path]
     fronts = []
     for trial_key in sorted(grp.keys()):
-        data = grp[trial_key][:]
-        if data.ndim == 2 and data.shape[0] == 3 and data.shape[1] != 3:
-            data = data.T
-        fronts.append(data)
+        fronts.append(objectives3(grp[trial_key][:]))
     return fronts
 
 
@@ -150,6 +148,15 @@ with h5py.File(H5_FILE, "r") as fid:
     n_se = len(SUBEXPS)
     fig, axes = plt.subplots(1, n_se, figsize=(4.5 * n_se, 4.5))
 
+    # Compute shared y-limit (median of medians + headroom, ignoring outliers)
+    all_medians = []
+    for se, all_kds in cached:
+        for algo in algo_keys:
+            for v in all_kds[algo]:
+                if v:
+                    all_medians.append(np.median(v))
+    shared_ymax = np.percentile(all_medians, 95) * 1.5 if all_medians else 1.0
+
     for ax, (se, all_kds) in zip(axes, cached):
         levels  = se["levels"]
         labels  = se["labels"]
@@ -161,6 +168,7 @@ with h5py.File(H5_FILE, "r") as fid:
                 medians = np.array([np.median(v) if v else 0.0 for v in vals])
                 q25     = np.array([np.percentile(v, 25) if v else 0.0 for v in vals])
                 q75     = np.array([np.percentile(v, 75) if v else 0.0 for v in vals])
+                q75     = np.minimum(q75, shared_ymax)
                 ax.plot(x, medians, marker="o", color=COLOURS[algo],
                         linewidth=2, markersize=5, label=ALGOS[algo])
                 ax.fill_between(x, q25, q75, color=COLOURS[algo], alpha=0.2)
@@ -175,10 +183,11 @@ with h5py.File(H5_FILE, "r") as fid:
                                     (n_algos - 1) / 2 * width, n_algos)
             for ai, algo in enumerate(algo_keys):
                 positions = [i + 1 + offsets[ai] for i in range(n_levels)]
-                data_per_level = [
-                    all_kds[algo][li] or [0.0]
-                    for li in range(n_levels)
-                ]
+                data_per_level = []
+                for li in range(n_levels):
+                    v = all_kds[algo][li] or [0.0]
+                    cap = np.percentile(v, 95) if len(v) > 1 else v[0]
+                    data_per_level.append([min(h, cap) for h in v])
                 bp = ax.boxplot(data_per_level, positions=positions,
                                 widths=width * 0.85, patch_artist=True,
                                 medianprops=dict(color="black", linewidth=1.5))
@@ -196,6 +205,7 @@ with h5py.File(H5_FILE, "r") as fid:
 
         ax.set_title(se["title"], fontsize=FS)
         ax.set_xlabel(se["xlabel"], fontsize=FS)
+        ax.set_ylim(0, shared_ymax)
         ax.tick_params(axis="y", labelsize=FS_TICK)
         ax.grid(False)
         if ax is axes[0]:

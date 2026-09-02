@@ -23,6 +23,10 @@ const N_STARLINK = 100
 const TOF_STEP   = 15.0
 const T_END      = 400.0
 
+# Cost-table fidelity: true → Section 4.3 continuous-thrust NLP, false → 4.2 impulsive.
+const CONTINUOUS_THRUST = false
+const FMAX_KMS2         = 3.5e-6   # km/s² (paper value; adjust for your servicer)
+
 # ── Step 1: rebuild mixed sim object ─────────────────────────────────────────
 @info "Loading mixed-fleet simulation …"
 sl_sats, _, _ = fetch_and_sample(n_targets=N_STARLINK, seed=42)
@@ -146,15 +150,18 @@ end
 
 # ── Step 4: compute ───────────────────────────────────────────────────────────
 @info "Computing sat↔sat entries …"
-CT_sat, PT_sat = build_cost_table_fast(sim_mixed, sat_to_sat_keys, plane_groups_all)
+CT_sat, PT_sat = build_cost_table_fast(sim_mixed, sat_to_sat_keys, plane_groups_all;
+                                       continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 
 @info "Computing depot→sat entries …"
 CT_dep_to_sat, PT_dep_to_sat = build_cost_table_depot_to_sat_fast(sim_mixed, depot_to_sat_keys,
-                                                                    INCREMENTAL ? plane_groups_pl : plane_groups_all)
+                                                                    INCREMENTAL ? plane_groups_pl : plane_groups_all;
+                                                                    continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 
 @info "Computing sat→depot entries …"
 CT_sat_to_dep, PT_sat_to_dep = build_cost_table_sat_to_depot_fast(sim_mixed, sat_to_depot_keys,
-                                                                    INCREMENTAL ? plane_groups_pl : plane_groups_all)
+                                                                    INCREMENTAL ? plane_groups_pl : plane_groups_all;
+                                                                    continuous=CONTINUOUS_THRUST, fmax=FMAX_KMS2)
 
 # ── Step 5: merge and save ────────────────────────────────────────────────────
 @info "Merging …"

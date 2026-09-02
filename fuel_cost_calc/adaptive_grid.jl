@@ -175,7 +175,8 @@ end
 function compute_missing_costs!(ag::AdaptiveGrid, sim, base_ct::Dict;
                                  filter_depot_sat::Bool = true,
                                  max_concurrent::Int = Threads.nthreads() * 2,
-                                 checkpoint_interval::Int = 50)
+                                 checkpoint_interval::Int = 50,
+                                 continuous::Bool = false, fmax::Float64 = 3.5e-6)
 
     # 1. Identify depot nodes (cache-friendly single pass)
     depot_set = filter_depot_sat ?
@@ -207,7 +208,7 @@ function compute_missing_costs!(ag::AdaptiveGrid, sim, base_ct::Dict;
     for i in 1:n_initial
         pair_idx += 1
         (f, t), keys = sorted[pair_idx]
-        active_tasks[i] = Threads.@spawn build_cost_table(sim, keys)
+        active_tasks[i] = Threads.@spawn build_cost_table(sim, keys; continuous=continuous, fmax=fmax)
         active_info[i] = (f, t)
     end
 
@@ -246,7 +247,7 @@ function compute_missing_costs!(ag::AdaptiveGrid, sim, base_ct::Dict;
         pair_idx += 1
         if pair_idx <= n_pairs
             (f, t), keys = sorted[pair_idx]
-            active_tasks[done_idx] = Threads.@spawn build_cost_table(sim, keys)
+            active_tasks[done_idx] = Threads.@spawn build_cost_table(sim, keys; continuous=continuous, fmax=fmax)
             active_info[done_idx] = (f, t)
         elseif length(active_tasks) > 1
             deleteat!(active_tasks, done_idx)
@@ -262,7 +263,8 @@ end
 # ── Main entry: generate adaptive cost table ────────────────────────────────
 
 function gen_adaptive_cost_table(sim, base_ct::Dict; target_dv::Float64=50.0,
-                                 compute_costs::Bool=false)
+                                 compute_costs::Bool=false,
+                                 continuous::Bool=false, fmax::Float64=3.5e-6)
     if isfile(ADAPTIVE_GRID_PATH)
         return load_adaptive_cost_table()
     end
@@ -296,7 +298,7 @@ function gen_adaptive_cost_table(sim, base_ct::Dict; target_dv::Float64=50.0,
 
     if compute_costs
         @info "Phase 3: computing missing costs..."
-        compute_missing_costs!(ag, sim, base_ct)
+        compute_missing_costs!(ag, sim, base_ct; continuous=continuous, fmax=fmax)
         jldsave(ADAPTIVE_GRID_PATH; d=base_ct, grid_meta=grid_meta)
     end
 
