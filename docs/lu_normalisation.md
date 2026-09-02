@@ -1,62 +1,92 @@
-# Which semi-major axis normalises Eq. 44 of Lu et al.?
+# Does our Lu et al. implementation agree with the Lu et al. paper?
 
-Section 4.2 of Lu et al. (2026) linearises the J2 nodal drift rate about a
-reference orbit, giving the RAAN-closure constraint
+Checked against the source: S. Lu, L. Wang, Z. Hao, X. Li, Y. Wang, X. Lin, Y. Qi,
+"Low-thrust transfer solution between circular orbits based on yaw switch
+steering and analytical propagation", Acta Astronautica 245 (2026) 924-936.
 
-    -3.5 * x1 - tan(I0) * x2 = R,      x1 = da / a_ref,   x2 = dI
+Short answer: yes. Every equation we implement matches the printed form, our
+coasting orbits reproduce the paper's exactly, and the one residual difference
+is an inconsistency inside the paper rather than in our code.
 
-The paper does not state whether `a_ref` is the initial semi-major axis `a0` or
-the mean `(a0 + af) / 2`. The choice shifts every general (Case 2) transfer, so
-it shifts every cross-shell entry of the cost table, by of order 0.3 %.
+## Eq. 44 settles the normalisation
 
-## What the published test cases say
+An earlier version of this note treated the reference semi-major axis in Eq. 44
+as ambiguous and inferred `a0` from Case 3. The paper states it outright:
 
-Reproducing the paper's Table 2 under both choices, at the optimum of the
-one-dimensional problem:
+    Delta Omega_dot_c = Omega_dot_0 * ( -3.5 * Delta a / a_0 - tan(I_0) * Delta I )    (44)
 
-| case | normalisation | coasting a_c [km] | error vs Lu | Delta V [m/s] | error vs Lu |
-|---|---|---|---|---|---|
-| 2 | a0    | 6871.323 | -2.388 km | 549.430 | -0.27 % |
-| 2 | a_bar | 6871.591 | -2.120 km | 550.925 | +0.00 % |
-| 2 | *Lu*  | 6873.711 |     -     | 550.915 |    -    |
-| 3 | a0    | 7147.646 | **+0.020 km** | 252.044 | +0.06 % |
-| 3 | a_bar | 7150.080 | +2.454 km | 252.044 | +0.06 % |
-| 3 | *Lu*  | 7147.626 |     -     | 251.900 |    -    |
+and Eq. 51 defines `x1 = Delta a / a_0`. The normalisation is **a0**, so
+`EQ44_NORMALISATION = "a0"` is correct by the source, not by inference. The mean
+semi-major axis `a_bar = (a0 + af)/2` and mean velocity `V_bar = (V0 + Vf)/2`
+belong to the velocity-increment expressions, Eqs. 52-53, which we also follow.
 
-Case 2 is ambiguous on its own, and in a specific way: **the paper's own Case-2
-row is internally inconsistent.** Its reported change in semi-major axis,
-da = -304.426 km, is the value the `a0` form produces (we get -304.475 km at the
-paper's reported dI, a 0.05 km difference). Its reported dI = 2.010 deg and
-Delta V = 550.915 m/s are the values the `a_bar` form produces (we get 2.0102 deg
-and 550.925 m/s). No single choice reproduces both halves of that row.
+The `a_bar` variant appeared to reproduce Case 2's published Delta V better.
+It does not do so because it is right; it happens to compensate for an
+arithmetic slip in the paper, shown below. That variant is kept selectable for
+audit only.
 
-Case 3 breaks the tie. There `a0` reproduces the published coasting orbit to
-0.02 km while `a_bar` is 2.45 km out, and the two give an identical Delta V, so
-nothing is traded away by choosing `a0`.
+## What reproduces exactly
 
-## Decision
+| quantity | paper | ours | difference |
+|---|---|---|---|
+| Case 1 coasting orbit a_c | 6853.309 km | 6853.310 | +0.001 km |
+| Case 2 coasting orbit a_c | 6873.711 km | 6873.711 | 0.000 km |
+| Case 3 coasting orbit a_c | 7147.626 km | 7147.626 | 0.000 km |
+| Case 1 Delta V (Eq. 49) | 484.664 m/s | 484.665 | +0.001 m/s |
 
-`EQ44_NORMALISATION = "a0"`, on three grounds:
+The Section 4.2 coasting orbit - which is what Section 4.2 actually computes -
+is reproduced to the last printed digit in all three cases.
 
-1. Eq. 44 is a first-order Taylor expansion of the nodal rate about the
-   *initial* orbit, so the perturbation it multiplies is naturally normalised by
-   `a0`. The mean semi-major axis has no role in that expansion. (`a_bar` and
-   `V_bar` do appear in the Delta V expressions, Eqs. 52-53, which span both
-   orbits — a different quantity, left alone.)
-2. It reproduces the coasting orbit, which is what Section 4.2 actually
-   computes, in both general test cases. The Delta V is a derived quantity.
-3. It agrees with the paper's own reported `da` in Case 2.
+**J2 nodal drift**, checked against Table 1's RAAN at t = 0 and t = 100 days:
 
-The cost is that the reported Delta V agreement in Case 2 loosens from 0.00 % to
-0.27 %. That remains well inside the 0.4 % already accepted for the Section 4.3
-NLP, and it is the honest number.
+| case | orbit | paper RAAN at 100 d | ours | difference |
+|---|---|---|---|---|
+| 1 | initial | 91.7 deg | 91.69 | -0.01 |
+| 2 | target | 128.2 deg | 128.19 | -0.01 |
+| 3 | initial | -445.7 deg | -445.73 | -0.03 |
+| 3 | target | -430.3 deg | -430.29 | +0.01 |
 
-Both forms remain selectable —
-`coasting_orbit_estimate(..., eq44_normalisation="a_bar")` — so the choice can
-be re-audited rather than taken on trust.
+This also pins the Earth radius. The agreement holds with the **equatorial**
+radius 6378.137 km; with the mean radius 6371.0 km the drift would be low by
+0.22 %, about 0.2 deg over 100 days, which this table would show. See
+`docs/edelbaum_port_audit.md`, where the same constant was corrected in the
+Edelbaum model.
 
-## Consequence for the paper
+**NLP reference values and seeds**, from Tables 3-8, all transcribed correctly:
+xi_1 = [1,0,1,0] is the minimising integer choice in all three cases
+(492.193 / 561.251 / 252.284 m/s), and the guidance parameters we seed from
+match Tables 3, 5 and 7 exactly.
 
-Appendix A (Tables A.1-A.3, "This Work" columns) was generated with the `a_bar`
-form and is stale under this decision. It must be regenerated, and the
-Section 3.2.6 sentence "agreeing to within 0.06 %" becomes "within 0.27 %".
+## The one difference, and it is the paper's
+
+Substituting the paper's **own** Table 2 values for `Delta a` and `Delta I` into
+the paper's **own** Eqs. 52-53:
+
+| case | recomputed J | paper J | difference |
+|---|---|---|---|
+| 1 (Eq. 49) | 484.655 | 484.664 | -0.009 m/s |
+| 2 (Eqs. 52-53) | **549.406** | **550.915** | **-1.509 m/s (-0.274 %)** |
+| 3 (Eqs. 52-53) | 252.044 | 251.900 | +0.144 m/s (+0.057 %) |
+
+Case 2 does not close. The inclination change implied by the paper's own
+reported `J_t = 304.428 m/s` and `Delta a = -304.426 km` is **2.0152 deg**,
+against the **2.010 deg** printed beside them - outside the rounding of the
+printed value. Solving for the `(V_bar, a_bar)` pair that would reproduce both
+`J_t` and `J_a` gives 7.43201 km/s and 7197.986 km, neither of which is any
+natural combination of the case's orbits. Case 3's total agrees to 0.057 %, with
+its `J_t`/`J_a` split off by about 1.2 m/s each way, which the coarse rounding of
+`Delta I` to 0.014 deg accounts for.
+
+So our Case 2 Delta V of 549.430 m/s is what Lu's equations give for Lu's
+problem. The 550.915 m/s printed in the paper is not reproducible from the
+inputs printed beside it.
+
+## Consequence for the manuscript
+
+Appendix A was generated with the `a_bar` variant and is stale. Regenerate it
+from `validate_lu.py`, and state the Section 3.2.6 agreement as it is: the
+coasting orbit reproduces to the last printed digit, Case 1 Delta V to
+0.001 m/s, Cases 2 and 3 to 0.27 % and 0.06 %, with the Case 2 residual traced
+to an internal inconsistency in the reference rather than to our implementation.
+That is a stronger claim than the current "within 0.06 %", because it is
+verifiable from the paper.
