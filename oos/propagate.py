@@ -54,6 +54,7 @@ import numpy as np
 from numba import njit, prange
 
 from .constants import J2, MU, R_E
+from .guards import R_FLOOR, den
 
 # The Julia used dt = 60 s. Over the 400-day horizon that integrates to a
 # spurious secular loss of up to 11.4 km in the mean semi-major axis and 4.4 deg
@@ -69,8 +70,8 @@ T_END_DAYS = 400.0
 def eci_from_oelem(sma, ecc, inc, raan, aop, nu):
     """Cartesian state from classical elements. Angles in radians, km and km/s."""
     p = sma * (1.0 - ecc * ecc)
-    rmag = p / (1.0 + ecc * math.cos(nu))
-    h = math.sqrt(MU * p)
+    rmag = p / den(1.0 + ecc * math.cos(nu))
+    h = den(math.sqrt(MU * abs(p)))
 
     rp0 = rmag * math.cos(nu)
     rp1 = rmag * math.sin(nu)
@@ -109,7 +110,7 @@ def oelem_from_rv(rx, ry, rz, vx, vy, vz):
     hx = ry * vz - rz * vy
     hy = rz * vx - rx * vz
     hz = rx * vy - ry * vx
-    h = math.sqrt(hx * hx + hy * hy + hz * hz)
+    h = den(math.sqrt(hx * hx + hy * hy + hz * hz), R_FLOOR)
 
     c = hz / h
     c = min(1.0, max(-1.0, c))
@@ -120,7 +121,7 @@ def oelem_from_rv(rx, ry, rz, vx, vy, vz):
     n = math.hypot(nx, ny)
     raan = 0.0 if n < 1e-10 else math.atan2(ny, nx)
 
-    rn = math.sqrt(rx * rx + ry * ry + rz * rz)
+    rn = den(math.sqrt(rx * rx + ry * ry + rz * rz), R_FLOOR)
     vn2 = vx * vx + vy * vy + vz * vz
     rdotv = rx * vx + ry * vy + rz * vz
     k = vn2 - MU / rn
@@ -135,13 +136,13 @@ def oelem_from_rv(rx, ry, rz, vx, vy, vz):
         if n < 1e-10:
             nu = math.atan2(ry, rx)
         else:
-            cu = (nx * rx + ny * ry) / (n * rn)
+            cu = (nx * rx + ny * ry) / den(n * rn)
             cu = min(1.0, max(-1.0, cu))
             nu = math.acos(cu)
             if rz < 0.0:
                 nu = 2.0 * math.pi - nu
     else:
-        cn = (ex * rx + ey * ry + ez * rz) / (ecc * rn)
+        cn = (ex * rx + ey * ry + ez * rz) / den(ecc * rn)
         cn = min(1.0, max(-1.0, cn))
         nu = math.acos(cn)
         if rdotv < 0.0:
@@ -153,7 +154,7 @@ def oelem_from_rv(rx, ry, rz, vx, vy, vz):
     if si < 1e-12:
         arglat = math.atan2(ry, rx) - raan
     else:
-        arglat = math.atan2(rz / si, rx * math.cos(raan) + ry * math.sin(raan))
+        arglat = math.atan2(rz / den(si), rx * math.cos(raan) + ry * math.sin(raan))
 
     energy = 0.5 * vn2 - MU / rn
     sma = math.inf if abs(energy) < 1e-10 else -MU / (2.0 * energy)
@@ -163,7 +164,7 @@ def oelem_from_rv(rx, ry, rz, vx, vy, vz):
 
 @njit(cache=True, inline="always")
 def _accel(rx, ry, rz, use_j2):
-    r2 = rx * rx + ry * ry + rz * rz
+    r2 = den(rx * rx + ry * ry + rz * rz, R_FLOOR * R_FLOOR)
     rmag = math.sqrt(r2)
     f = -MU / (rmag * r2)
     ax, ay, az = f * rx, f * ry, f * rz
@@ -253,7 +254,7 @@ def mean_to_true(mean_anom, ecc, tol=1e-12, itmax=50):
     for _ in range(itmax):
         f = e_anom - ecc * math.sin(e_anom) - mean_anom
         fp = 1.0 - ecc * math.cos(e_anom)
-        step = f / fp
+        step = f / (fp if abs(fp) > 1e-14 else math.copysign(1e-14, fp or 1.0))
         e_anom -= step
         if abs(step) < tol:
             break

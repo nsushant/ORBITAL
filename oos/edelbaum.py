@@ -39,6 +39,7 @@ import numpy as np
 from numba import njit
 
 from .constants import G0, J2, MU, R_E
+from .guards import A_FLOOR, MASS_FLOOR, V2_FLOOR, den
 
 # State vector layout, used throughout: [a, incl, raan, mass, isp, thrust].
 A, INCL, RAAN, MASS, ISP, THRUST = 0, 1, 2, 3, 4, 5
@@ -97,7 +98,7 @@ def from_velocity_plane(x, y):
     v2 = x * x + y * y
     if v2 <= 0.0:                      # the origin maps to an infinite orbit
         return np.inf, 0.0
-    a = MU / v2
+    a = MU / den(v2, V2_FLOOR)
     incl = 2.0 / np.pi * np.arctan2(y, x)
     return a, incl
 
@@ -111,8 +112,9 @@ def wrap_pi(x):
 @njit(cache=True)
 def j2_raan_rate(a, incl):
     """Secular J2 nodal regression rate [rad/s] for a circular orbit."""
-    n = np.sqrt(MU / a**3)
-    return -1.5 * J2 * (R_E / a) ** 2 * n * np.cos(incl)
+    a_g = den(a, A_FLOOR)
+    n = np.sqrt(MU / (a_g * a_g * a_g))
+    return -1.5 * J2 * (R_E / a_g) ** 2 * n * np.cos(incl)
 
 
 @njit(cache=True)
@@ -121,8 +123,8 @@ def arc_cost(a0, incl0, af, inclf, mass, isp, thrust):
     x0, y0 = to_velocity_plane(a0, incl0)
     xf, yf = to_velocity_plane(af, inclf)
     dv = np.hypot(xf - x0, yf - y0)
-    v_exhaust = isp * G0
-    duration = v_exhaust * (mass / thrust) * (1.0 - np.exp(-dv / v_exhaust))
+    v_exhaust = den(isp * G0)
+    duration = v_exhaust * (mass / den(thrust)) * (1.0 - np.exp(-dv / v_exhaust))
     return dv, duration, mass * np.exp(-dv / v_exhaust)
 
 
@@ -137,7 +139,7 @@ def _raan_during_arc(a0, incl0, mass, isp, thrust, x0, y0, xf, yf, dv):
     """
     if dv <= 1e-15:
         return 0.0
-    v_exhaust = isp * G0
+    v_exhaust = den(isp * G0)
     total = 0.0
     for k in range(_GL_NODES.shape[0]):
         s = dv * 0.5 * (_GL_NODES[k] + 1.0)
@@ -146,7 +148,9 @@ def _raan_during_arc(a0, incl0, mass, isp, thrust, x0, y0, xf, yf, dv):
         x = x0 + frac * (xf - x0)
         y = y0 + frac * (yf - y0)
         a_s, incl_s = from_velocity_plane(x, y)
-        accel = thrust / (mass * np.exp(-s / v_exhaust))
+        # The mass here is the rocket equation's, and on a pathological arc it
+        # underflows to exactly zero. This is the division that used to raise.
+        accel = thrust / den(mass * np.exp(-s / v_exhaust), MASS_FLOOR)
         total += j2_raan_rate(a_s, incl_s) / accel * weight
     return total
 

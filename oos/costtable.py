@@ -250,6 +250,22 @@ def main():
 
     finite = np.isfinite(dv)
     n_off = pairs * len(grid) ** 2
+
+    # A table of NaNs reads downstream as "no transfer exists" rather than
+    # "never computed", so an empty or near-empty build has to announce itself
+    # rather than be inferred from a percentage in a log nobody reads. This is
+    # what a numba parallel build did when the ring search hit a degenerate
+    # drift orbit: it returned all NaN instead of raising.
+    if finite.sum() == 0:
+        raise SystemExit(
+            "ABORT: not one entry is feasible. That is a numerical failure, not "
+            "a result -- a table of NaNs is indistinguishable downstream from a "
+            "table saying no transfer exists. Run tests/test_guards.py and "
+            "tests/test_edelbaum.py before trusting anything built from this.")
+    dead_rows = int((~finite).all(axis=(1, 2, 3)).sum())
+    if dead_rows:
+        print(f"WARNING: {dead_rows} departure node(s) have no feasible transfer "
+              f"to anywhere, at any epoch. Check they are real orbits.")
     print(f"feasible entries: {finite.sum():,} of {n_off:,} "
           f"({100.0 * finite.sum() / n_off:.1f} %)")
     if finite.any():

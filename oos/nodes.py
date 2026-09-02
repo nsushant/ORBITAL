@@ -40,6 +40,7 @@ import h5py
 import numpy as np
 
 from .constants import J2, MU, R_E
+from .guards import A_FLOOR
 
 A, INCL, RAAN, NU, ARGLAT = 0, 1, 2, 3, 4
 
@@ -80,8 +81,9 @@ def _fit_line(t, y):
 
 def draconitic_rate(a, incl, ecc=0.0):
     """Secular rate of the argument of latitude, argp_dot + M_dot [rad/s]."""
+    a = max(float(a), A_FLOOR)
     n = np.sqrt(MU / a**3)
-    p = a * (1.0 - ecc * ecc)
+    p = max(a * (1.0 - ecc * ecc), A_FLOOR)
     k = 0.75 * J2 * (R_E / p) ** 2
     c2 = np.cos(incl) ** 2
     argp_dot = k * n * (5.0 * c2 - 1.0)

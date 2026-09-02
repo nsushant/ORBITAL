@@ -25,6 +25,7 @@ import numpy as np
 from numba import njit
 
 from .constants import MU
+from .guards import A_FLOOR, den
 
 DA_MAX = 50.0        # km, cap on the phasing orbit's semi-major-axis offset
 K_MAX = 10000        # safety cap on the revolution count
@@ -37,7 +38,8 @@ def phasing(a0, u_from, u_to):
     `u_from` is where the servicer arrives in the target plane and `u_to` is
     where the client is; both are arguments of latitude in radians.
     """
-    n0 = np.sqrt(MU / a0**3)
+    a_g = den(a0, A_FLOOR)
+    n0 = den(np.sqrt(MU / (a_g * a_g * a_g)))
     period = 2.0 * np.pi / n0
     gap = (u_to - u_from) % (2.0 * np.pi)
     if gap < 1e-10:
@@ -53,7 +55,10 @@ def phasing(a0, u_from, u_to):
 
     t_orb = period + gap / (n0 * k)
     a_p = (MU * (t_orb / (2.0 * np.pi)) ** 2) ** (1.0 / 3.0)
-    dv = 2.0 * abs(np.sqrt(MU * (2.0 / a0 - 1.0 / a_p)) - np.sqrt(MU / a0))
+    radicand = MU * (2.0 / a_g - 1.0 / den(a_p, A_FLOOR))
+    if radicand < 0.0:                 # the phasing orbit is not an orbit
+        return np.nan, np.nan
+    dv = 2.0 * abs(np.sqrt(radicand) - np.sqrt(MU / a_g))
     return dv, k * t_orb
 
 

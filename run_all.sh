@@ -31,6 +31,7 @@ if run_stage 0; then
 banner 0 "gates -- run these before trusting anything below"
 python3 tests/test_propagate.py
 python3 tests/test_edelbaum.py
+python3 tests/test_guards.py
 fi
 
 # ---------------------------------------------------------------------------
