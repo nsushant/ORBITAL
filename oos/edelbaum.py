@@ -48,6 +48,24 @@ _GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(16)
 # Sentinel for "no per-entry RAAN gaps given"; numba needs a concrete array type.
 EMPTY = np.empty(0)
 
+# A drift orbit has to be an orbit. In the velocity plane a point at radius v
+# maps to a = MU / v^2, so v -> 0 maps to a -> infinity and the origin itself is
+# a division by zero; rings of large growth sweep straight through it. These
+# bounds reject such points where drift orbits are evaluated, in `ring_bundles`
+# and `drift_orbit_residual`. `from_velocity_plane` itself stays a pure
+# coordinate map, so the geometric ring identity still holds everywhere.
+# The bounds bite only on rings far outside anything affordable: delta-V on a
+# ring is 2*(c + growth), so a growth of even 1 km/s already costs 2 km/s, four
+# times the servicer's whole budget.
+A_DRIFT_MIN = R_E + 150.0     # km
+A_DRIFT_MAX = 10.0 * R_E      # km
+
+# Ceiling on the ring search. Circular-orbit speeds in this problem are about
+# 7.6 km/s, so a growth of 8 km/s already reaches the origin of the velocity
+# plane; nothing beyond it is an orbit. It is also 32 times the largest growth
+# the servicer could pay for.
+MAX_GROWTH = 8.0              # km/s
+
 
 @njit(cache=True)
 def to_velocity_plane(a, incl):
@@ -57,7 +75,10 @@ def to_velocity_plane(a, incl):
 
 @njit(cache=True)
 def from_velocity_plane(x, y):
-    a = MU / (x * x + y * y)
+    v2 = x * x + y * y
+    if v2 <= 0.0:                      # the origin maps to an infinite orbit
+        return np.inf, 0.0
+    a = MU / v2
     incl = 2.0 / np.pi * np.arctan2(y, x)
     return a, incl
 
@@ -201,6 +222,14 @@ def ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan):
         xd, yd = ring_point(growth, x1, y1, x2, y2, t)
         a_d, incl_d = from_velocity_plane(xd, yd)
 
+        if a_d < A_DRIFT_MIN or a_d > A_DRIFT_MAX:
+            out[k, 0] = np.nan
+            out[k, 1] = np.nan
+            out[k, 2] = np.nan
+            out[k, 3] = np.nan
+            out[k, 4] = np.nan
+            continue
+
         dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
                                     state1[MASS], state1[ISP], state1[THRUST])
         raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
@@ -280,7 +309,7 @@ def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
 
 @njit(cache=True)
 def transfer_cost(state1, state2, tofs, d_raans=EMPTY, n_scan=180, n_growth=48,
-                  max_growth=4096.0, growth_rtol=1e-3):
+                  max_growth=MAX_GROWTH, growth_rtol=1e-3):
     """Minimum delta-V [km/s] for one orbit pair over several times of flight.
 
     Every point on a ring costs the same: the ring is an ellipse with the two
