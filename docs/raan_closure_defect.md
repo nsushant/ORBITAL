@@ -61,3 +61,35 @@ answering the question it was supposed to answer.
 
 The time-of-flight feasibility test (the two arcs must fit inside the horizon)
 is unaffected and stays as it is.
+
+## Fix as implemented
+
+Two changes, in `oos/edelbaum.py`:
+
+**1. Closure is solved for, not tested.** `ring_closes` scans the ring
+parameter, brackets every sign change of the residual that is not a 2*pi wrap,
+and bisects it to convergence. `RAAN_CLOSURE_TOL` is gone — there is no
+tolerance left to set, because the drift orbit is found rather than stumbled on.
+
+**2. The search minimises over rings, not points.** A ring is an ellipse with
+the two velocity-plane endpoints as foci, and the two arcs are the distances
+from the drift orbit to each focus. Their sum is therefore exactly
+`2 * (c + growth)`, independent of where on the ring the drift orbit sits —
+verified to 2.8e-14 km/s in `test_ring_delta_v_identity`. So the transfer cost
+depends only on which ring closes, and the search reduces to finding the
+smallest ring that carries a closing drift orbit: scan the growth ladder outward
+for the first ring that closes, then bisect against the last that did not. This
+is what Section 3.2.4 of the manuscript describes, and it is now what the code
+does. Feasibility is deliberately not assumed monotone in growth — too small a
+ring cannot buy enough nodal drift, too large a one spends so long thrusting
+that the arcs no longer fit the horizon — so the ladder is scanned rather than
+bisected from the outset.
+
+## Result
+
+On the population of the table above, the search now finds **34 of 34** of the
+transfers that provably exist (100 %), against 7.8 % before.
+`test_search_finds_the_transfers_that_exist` guards this and fails below 95 %.
+
+Cost: 19 ms per orbit pair over 7 times of flight, so a 225-node table over a
+7-point grid is about 0.3 core-hours.

@@ -104,40 +104,95 @@ def test_raan_quadrature_against_fine_integration():
     return rel
 
 
-def test_returned_transfer_actually_closes_raan():
-    """Every delta-V the search returns must correspond to a closing transfer."""
+def test_ring_delta_v_identity():
+    """Every point on a ring costs the same: dv1 + dv2 = 2 * (c + growth).
+
+    The ring is an ellipse with the two endpoints as foci, and the arcs are the
+    distances from the drift orbit to each focus. This identity is what lets the
+    search minimise over rings instead of over points.
+    """
     mass, isp, thrust = 335.0, 2800.0, 1e-5
+    a0, af = 6378.137 + 550.0, 6378.137 + 700.0
+    i0, i_f = math.radians(53.0), math.radians(56.0)
+    x1, y1 = eb.to_velocity_plane(a0, i0)
+    x2, y2 = eb.to_velocity_plane(af, i_f)
+    c = 0.5 * math.hypot(x2 - x1, y2 - y1)
+
+    worst = 0.0
+    for growth in (0.0, 0.05, 0.2, 1.0, 5.0, 50.0):
+        t_max = 1.0 if growth == 0.0 else 2 * math.pi
+        for t in np.linspace(0.0, t_max, 37):
+            px, py = eb.ring_point(growth, x1, y1, x2, y2, t)
+            a_d, i_d = eb.from_velocity_plane(px, py)
+            dv1, _, m_d = eb.arc_cost(a0, i0, a_d, i_d, mass, isp, thrust)
+            dv2, _, _ = eb.arc_cost(a_d, i_d, af, i_f, m_d, isp, thrust)
+            worst = max(worst, abs((dv1 + dv2) - 2 * (c + growth)))
+    assert worst < 1e-12, f"worst deviation {worst:.2e} km/s"
+    return worst
+
+
+def test_returned_cost_corresponds_to_a_closing_drift_orbit():
+    """Each delta-V returned must sit on a ring that genuinely closes RAAN."""
+    mass, isp, thrust = 335.0, 2800.0, 1e-5
+    rng = np.random.default_rng(11)
     checked = 0
-    rng = np.random.default_rng(7)
-    for _ in range(40):
-        a0 = 6378.137 + rng.uniform(400, 600)
-        af = 6378.137 + rng.uniform(400, 600)
-        i0 = math.radians(rng.uniform(50, 56))
-        i_f = math.radians(rng.uniform(50, 56))
-        raan_gap = rng.uniform(-1.0, 1.0)
+    for _ in range(30):
+        a0 = 6378.137 + rng.uniform(500, 600)
+        af = a0 + rng.uniform(-60, 60)
+        i0 = math.radians(53.0 + rng.uniform(-0.5, 0.5))
+        i_f = i0 + math.radians(rng.uniform(-2, 2))
+        gap = rng.uniform(-math.pi, math.pi)
         s1 = np.array([a0, i0, 0.0, mass, isp, thrust])
-        s2 = np.array([af, i_f, raan_gap, mass, isp, thrust])
-        tofs = np.array([30.0, 60.0, 120.0]) * 86400.0
+        s2 = np.array([af, i_f, gap, mass, isp, thrust])
+        tofs = np.array([180.0, 365.0]) * 86400.0
         out = eb.transfer_cost(s1, s2, tofs)
+
+        x1, y1 = eb.to_velocity_plane(a0, i0)
+        x2, y2 = eb.to_velocity_plane(af, i_f)
+        c = 0.5 * math.hypot(x2 - x1, y2 - y1)
         for k, dv in enumerate(out):
             if np.isnan(dv):
                 continue
-            # Re-derive closure independently of the search bookkeeping.
-            found = False
-            for growth in [0.0] + list(10.0 ** np.linspace(-1, np.log10(8.0), 20)):
-                pts = eb.ellipse_points(growth, *eb.to_velocity_plane(a0, i0),
-                                        *eb.to_velocity_plane(af, i_f), 30)
-                for p in pts:
-                    v = eb.evaluate_drift_orbit(p[0], p[1], s1, s2, tofs[k], raan_gap)
-                    if not np.isnan(v) and abs(v - dv) < 1e-12:
-                        found = True
-                        break
-                if found:
-                    break
-            assert found, "returned delta-V not reproducible from an admissible drift orbit"
+            growth = 0.5 * dv - c
+            assert growth > -1e-9, "returned cost below the direct transfer"
+            assert eb.ring_closes(max(growth, 0.0), x1, y1, x2, y2, s1, s2,
+                                  tofs[k], gap, 180), "no closing drift orbit on that ring"
             checked += 1
     assert checked > 0, "no feasible transfers generated; test is vacuous"
     return checked
+
+
+def test_search_finds_the_transfers_that_exist():
+    """Regression guard on docs/raan_closure_defect.md.
+
+    The old sampling search found 7.8 % of the transfers that provably exist on
+    this population. Root-finding must find essentially all of them.
+    """
+    mass, isp, thrust = 335.0, 2800.0, 1e-5
+    rng = np.random.default_rng(11)
+    exists = 0
+    found = 0
+    for _ in range(60):
+        a0 = 6378.137 + rng.uniform(500, 600)
+        af = a0 + rng.uniform(-60, 60)
+        i0 = math.radians(53.0 + rng.uniform(-0.5, 0.5))
+        i_f = i0 + math.radians(rng.uniform(-2, 2))
+        gap = rng.uniform(-math.pi, math.pi)
+        tof = rng.uniform(120, 365) * 86400.0
+        s1 = np.array([a0, i0, 0.0, mass, isp, thrust])
+        s2 = np.array([af, i_f, gap, mass, isp, thrust])
+
+        x1, y1 = eb.to_velocity_plane(a0, i0)
+        x2, y2 = eb.to_velocity_plane(af, i_f)
+        ladder = [0.0] + list(10.0 ** np.linspace(-2, np.log10(4096.0), 48))
+        any_ring = any(eb.ring_closes(g, x1, y1, x2, y2, s1, s2, tof, gap, 360)
+                       for g in ladder)
+        exists += any_ring
+        found += (not np.isnan(eb.transfer_cost(s1, s2, np.array([tof]))[0]))
+    assert exists > 0, "test population has no feasible transfers; not informative"
+    rate = found / exists
+    assert rate > 0.95, f"only {100*rate:.1f} % of existing transfers found"
+    return exists, found, rate
 
 
 if __name__ == "__main__":
@@ -147,5 +202,8 @@ if __name__ == "__main__":
     print(f"burn duration vs rocket equation     duration       = {test_burn_duration_matches_rocket_equation():.1f} s")
     print(f"sun-synchronous drift rate           = {test_sun_synchronous_drift_rate():.4f} deg/day (want 0.9856)")
     print(f"RAAN quadrature vs fine trapezoid    rel. err       = {test_raan_quadrature_against_fine_integration():.2e}")
-    print(f"returned transfers close RAAN        checked        = {test_returned_transfer_actually_closes_raan()} solutions")
+    print(f"ring delta-V identity                worst dev      = {test_ring_delta_v_identity():.2e} km/s")
+    print(f"returned costs close RAAN            checked        = {test_returned_cost_corresponds_to_a_closing_drift_orbit()} solutions")
+    e, f, r = test_search_finds_the_transfers_that_exist()
+    print(f"transfers found vs transfers existing = {f}/{e}  ({100*r:.1f} %)")
     print("\nall checks passed")

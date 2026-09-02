@@ -40,12 +40,6 @@ from numba import njit
 
 from .constants import G0, J2, MU, R_E
 
-# A drift orbit is admissible when the RAAN it delivers matches the required gap
-# to within this tolerance. The candidate set is discrete, so exact closure is
-# not attainable; 0.01 rad (0.57 deg) is tight against a nodal gap of tens of
-# degrees and loose enough for a 30-point ring to contain a hit.
-RAAN_CLOSURE_TOL = 1e-2
-
 # State vector layout, used throughout: [a, incl, raan, mass, isp, thrust].
 A, INCL, RAAN, MASS, ISP, THRUST = 0, 1, 2, 3, 4, 5
 
@@ -115,54 +109,15 @@ def _raan_during_arc(a0, incl0, mass, isp, thrust, x0, y0, xf, yf, dv):
 
 
 @njit(cache=True)
-def evaluate_drift_orbit(xd, yd, state1, state2, tof, d_raan):
-    """Total delta-V [km/s] through drift orbit (xd, yd), or NaN if inadmissible.
+def ring_point(growth, x1, y1, x2, y2, t):
+    """One point on a candidate ring, at ring parameter t.
 
-    Inadmissible means either the two arcs do not fit inside the time of flight,
-    or the RAAN delivered over arc-coast-arc does not close the gap.
+    `growth` = 0 is the chord joining the endpoints, parameterised by t in
+    [0, 1]. `growth` > 0 is an ellipse with the endpoints as foci, parameterised
+    by t in [0, 2*pi].
     """
-    a_d, incl_d = from_velocity_plane(xd, yd)
-
-    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
-    dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
-                                state1[MASS], state1[ISP], state1[THRUST])
-    if tof - dt1 <= 0.0:
-        return np.nan
-    raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
-                             state1[ISP], state1[THRUST], x1, y1, xd, yd, dv1)
-
-    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
-    dv2, dt2, _ = arc_cost(a_d, incl_d, state2[A], state2[INCL],
-                           mass_d, state1[ISP], state1[THRUST])
-    raan2 = _raan_during_arc(a_d, incl_d, mass_d, state1[ISP], state1[THRUST],
-                             xd, yd, x2, y2, dv2)
-
-    t_coast = tof - dt1 - dt2
-    if t_coast < 0.0:
-        return np.nan
-
-    delivered = raan1 + j2_raan_rate(a_d, incl_d) * t_coast + raan2
-    if np.abs(wrap_pi(delivered - d_raan)) > RAAN_CLOSURE_TOL:
-        return np.nan
-    return dv1 + dv2
-
-
-@njit(cache=True)
-def ellipse_points(growth, x1, y1, x2, y2, num_points):
-    """Points on an ellipse with foci (x1, y1) and (x2, y2).
-
-    `growth` is how far the semi-major axis exceeds the half focal separation,
-    so growth = 0 degenerates to the chord between the foci, sampled uniformly.
-    Larger growth reaches drift orbits further from both endpoints: more
-    delta-V, but a faster nodal drift.
-    """
-    out = np.empty((num_points, 2))
     if growth == 0.0:
-        for k in range(num_points):
-            t = 0.0 if num_points == 1 else k / (num_points - 1.0)
-            out[k, 0] = (1.0 - t) * x1 + t * x2
-            out[k, 1] = (1.0 - t) * y1 + t * y2
-        return out
+        return (1.0 - t) * x1 + t * x2, (1.0 - t) * y1 + t * y2
 
     cx, cy = 0.5 * (x1 + x2), 0.5 * (y1 + y2)
     dx, dy = x2 - x1, y2 - y1
@@ -177,32 +132,117 @@ def ellipse_points(growth, x1, y1, x2, y2, num_points):
 
     semi_major = c + growth
     semi_minor = np.sqrt(max(semi_major * semi_major - c * c, 0.0))
+    return (cx + semi_major * np.cos(t) * ux + semi_minor * np.sin(t) * px,
+            cy + semi_major * np.cos(t) * uy + semi_minor * np.sin(t) * py)
+
+
+@njit(cache=True)
+def ellipse_points(growth, x1, y1, x2, y2, num_points):
+    """`num_points` samples of the ring, for inspection and plotting."""
+    out = np.empty((num_points, 2))
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
     for k in range(num_points):
-        t = 0.0 if num_points == 1 else 2.0 * np.pi * k / (num_points - 1.0)
-        out[k, 0] = cx + semi_major * np.cos(t) * ux + semi_minor * np.sin(t) * px
-        out[k, 1] = cy + semi_major * np.cos(t) * uy + semi_minor * np.sin(t) * py
+        t = 0.0 if num_points == 1 else t_max * k / (num_points - 1.0)
+        out[k, 0], out[k, 1] = ring_point(growth, x1, y1, x2, y2, t)
     return out
 
 
 @njit(cache=True)
-def _candidates(x1, y1, x2, y2, num_points, growths):
-    out = np.empty((growths.shape[0] * num_points, 2))
-    for g in range(growths.shape[0]):
-        ring = ellipse_points(growths[g], x1, y1, x2, y2, num_points)
-        out[g * num_points:(g + 1) * num_points, :] = ring
-    return out
+def drift_orbit_residual(xd, yd, state1, state2, tof, d_raan):
+    """RAAN closure residual for a drift orbit, and the coast it implies.
+
+    Returns (residual [rad], coast duration [s]). The residual is NaN when the
+    two arcs do not fit inside the time of flight, which is the one hard
+    feasibility limit; everything else is a matter of hitting the right node.
+    """
+    a_d, incl_d = from_velocity_plane(xd, yd)
+
+    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
+    dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
+                                state1[MASS], state1[ISP], state1[THRUST])
+    if tof - dt1 <= 0.0:
+        return np.nan, np.nan
+    raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
+                             state1[ISP], state1[THRUST], x1, y1, xd, yd, dv1)
+
+    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    dv2, dt2, _ = arc_cost(a_d, incl_d, state2[A], state2[INCL],
+                           mass_d, state1[ISP], state1[THRUST])
+    raan2 = _raan_during_arc(a_d, incl_d, mass_d, state1[ISP], state1[THRUST],
+                             xd, yd, x2, y2, dv2)
+
+    t_coast = tof - dt1 - dt2
+    if t_coast < 0.0:
+        return np.nan, np.nan
+
+    delivered = raan1 + j2_raan_rate(a_d, incl_d) * t_coast + raan2
+    return wrap_pi(delivered - d_raan), t_coast
 
 
 @njit(cache=True)
-def transfer_cost(state1, state2, tofs, num_points=30, n_rings=20, max_growth=4096.0):
+def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+    """True when some drift orbit on this ring closes RAAN exactly.
+
+    The residual is continuous in the ring parameter except where it steps by
+    2*pi, so a sign change across a small step brackets a genuine root. The
+    bracket is then bisected, which drives the residual to zero rather than
+    testing sampled points against a tolerance — the difference between finding
+    the transfers that exist and finding the ones a sample happens to land on.
+    """
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
+    prev_r = np.nan
+    prev_t = 0.0
+    for k in range(n_scan + 1):
+        t = t_max * k / n_scan
+        px, py = ring_point(growth, x1, y1, x2, y2, t)
+        r, _ = drift_orbit_residual(px, py, state1, state2, tof, d_raan)
+
+        if not np.isnan(r) and not np.isnan(prev_r):
+            if r == 0.0:
+                return True
+            # A sign change is a root only if the residual did not jump by 2*pi
+            # across the step; those jumps are the wrap, not a crossing.
+            if prev_r * r < 0.0 and np.abs(r - prev_r) < np.pi:
+                lo_t, lo_r = prev_t, prev_r
+                hi_t = t
+                converged = True
+                for _ in range(60):
+                    mid_t = 0.5 * (lo_t + hi_t)
+                    mx, my = ring_point(growth, x1, y1, x2, y2, mid_t)
+                    mr, _ = drift_orbit_residual(mx, my, state1, state2, tof, d_raan)
+                    if np.isnan(mr):
+                        converged = False
+                        break
+                    if (mr < 0.0) == (lo_r < 0.0):
+                        lo_t, lo_r = mid_t, mr
+                    else:
+                        hi_t = mid_t
+                if converged:
+                    return True
+        prev_r, prev_t = r, t
+    return False
+
+
+@njit(cache=True)
+def transfer_cost(state1, state2, tofs, n_scan=180, n_growth=48,
+                  max_growth=4096.0, growth_rtol=1e-3):
     """Minimum delta-V [km/s] for one orbit pair over several times of flight.
 
-    Drift-orbit candidates are expensive to evaluate and independent of the time
-    of flight only up to the coast duration, so the chord and the first rings are
-    tried for every time of flight before the rings are widened. Times of flight
-    with no admissible drift orbit come back as NaN.
+    Every point on a ring costs the same: the ring is an ellipse with the two
+    endpoints as foci, and the two arcs are the distances from the point to each
+    focus, so their sum is exactly 2*(c + growth) with c the half focal
+    separation. The transfer delta-V therefore depends only on which ring the
+    drift orbit lies on, and the search reduces to finding the *smallest* ring
+    carrying a drift orbit that closes RAAN — which is what Section 3.2.4
+    describes. The chord (growth = 0) is the direct Edelbaum transfer.
 
-    `tofs` in seconds. `state1`, `state2` are [a, incl, raan, mass, isp, thrust].
+    Feasibility is not monotone in growth: too small a ring cannot buy enough
+    nodal drift, and too large a one spends so long thrusting that the arcs no
+    longer fit inside the horizon. So the ladder is scanned outward for the
+    first ring that closes, then bisected against the last one that did not.
+
+    `tofs` in seconds. States are [a, incl, raan, mass, isp, thrust].
+    NaN where no drift orbit closes RAAN within the time of flight.
     """
     n_tofs = tofs.shape[0]
     best = np.full(n_tofs, np.nan)
@@ -210,30 +250,33 @@ def transfer_cost(state1, state2, tofs, num_points=30, n_rings=20, max_growth=40
 
     x1, y1 = to_velocity_plane(state1[A], state1[INCL])
     x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    half_separation = 0.5 * np.hypot(x2 - x1, y2 - y1)
 
-    growth_limit = 8.0
-    points = ellipse_points(0.0, x1, y1, x2, y2, num_points)
+    ladder = 10.0 ** np.linspace(-2.0, np.log10(max_growth), n_growth)
 
-    while True:
-        for k in range(n_tofs):
-            if not np.isnan(best[k]):
-                continue
-            local = np.inf
-            for c in range(points.shape[0]):
-                dv = evaluate_drift_orbit(points[c, 0], points[c, 1],
-                                          state1, state2, tofs[k], d_raan)
-                if not np.isnan(dv) and dv < local:
-                    local = dv
-            if local < np.inf:
-                best[k] = local
+    for k in range(n_tofs):
+        tof = tofs[k]
+        if ring_closes(0.0, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+            best[k] = 2.0 * half_separation      # the direct transfer already closes
+            continue
 
-        if not np.any(np.isnan(best)) or growth_limit > max_growth:
-            break
+        lo = 0.0                                  # largest growth known not to close
+        hi = -1.0                                 # smallest known to close
+        for g in range(ladder.shape[0]):
+            if ring_closes(ladder[g], x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+                hi = ladder[g]
+                break
+            lo = ladder[g]
+        if hi < 0.0:
+            continue                              # nothing on the ladder closes
 
-        growths = 10.0 ** np.linspace(np.log10(growth_limit / 8.0),
-                                      np.log10(growth_limit), n_rings)
-        points = _candidates(x1, y1, x2, y2, num_points, growths)
-        growth_limit *= 8.0
+        while hi - lo > growth_rtol * hi:
+            mid = 0.5 * (lo + hi)
+            if ring_closes(mid, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+                hi = mid
+            else:
+                lo = mid
+        best[k] = 2.0 * (half_separation + hi)
 
     return best
 
