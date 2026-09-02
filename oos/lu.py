@@ -369,3 +369,110 @@ def nlp_transfer_cost(a0, incl0, af, inclf, a_c, incl_c, raan0, raan_target,
         if residual < feasibility_tol and (best is None or res.fun < best):
             best = float(res.fun)
     return best
+
+
+def _seed_from_phase_inversion(a_start, incl_start, a_target, incl_target, theta, fmax):
+    """Yaw angle and duration of an arc that would reach the target, inverted
+    from the averaged dynamics at a fixed switch angle.
+
+    Used only to start the NLP. The published cases come with tabulated
+    solutions to start from; a general geometry does not, and SLSQP on this
+    problem does not converge from an arbitrary point.
+    """
+    v_start = math.sqrt(MU / a_start)
+    v_target = math.sqrt(MU / a_target)
+    d_incl = incl_target - incl_start
+    if abs(v_target - v_start) < 1e-12:
+        return None
+    beta = math.atan(-d_incl * theta / (math.sin(theta) * math.log(v_target / v_start)))
+    if math.cos(beta) * (v_start - v_target) < 0.0:
+        beta += math.pi
+    beta = (beta + math.pi) % (2.0 * math.pi) - math.pi
+    duration = math.pi * (v_start - v_target) / (2.0 * theta * fmax * math.cos(beta))
+    return beta, duration
+
+
+# Switch angles tried when seeding the NLP. The seed burn duration scales
+# roughly as 1/theta, so a single small angle is unusable at low thrust: at
+# 10 mN on 335 kg a 10-degree seed asks for 1080 days of thrusting inside a
+# 90-day horizon and is rejected before the optimiser ever runs, while an
+# 85-degree seed asks for 130 days. theta is a decision variable, so seeding
+# from several angles costs only optimiser restarts and loses nothing.
+SEED_SWITCH_ANGLES = tuple(math.radians(d) for d in (10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 85.0))
+
+
+def transfer_cost_nlp(a0, incl0, raan0, af, inclf, raanf, tof_days,
+                      fmax=FMAX_DEFAULT, eq44_normalisation=None,
+                      switch_angles=SEED_SWITCH_ANGLES, feasibility_tol=1e-3):
+    """Section 4.3 continuous-thrust delta-V [m/s] for an arbitrary geometry.
+
+    Runs the Section 4.2 estimate to fix the coasting orbit, seeds the NLP by
+    phase inversion about that orbit, and optimises. Returns None when no
+    admissible coasting orbit exists, when the two arcs cannot fit inside the
+    horizon, or when the NLP fails to converge to a feasible point - the caller
+    decides whether to fall back on the Section 4.2 estimate.
+
+    `fmax` is thrust acceleration [km/s^2]; for a servicer of mass m carrying
+    thrust T it is T/m.
+    """
+    orbit = coasting_orbit_estimate(a0, incl0, raan0, af, inclf, raanf, tof_days,
+                                    eq44_normalisation=eq44_normalisation)
+    if orbit is None:
+        return None
+
+    tf_sec = tof_days * DAY
+    raan_target = raanf + raan_drift_rate(af, inclf) * tf_sec
+
+    seeds = []
+    for switch_angle in switch_angles:
+        transfer = _seed_from_phase_inversion(a0, incl0, orbit.a_c, orbit.incl_c,
+                                              switch_angle, fmax)
+        adjust = _seed_from_phase_inversion(orbit.a_c, orbit.incl_c, af, inclf,
+                                            switch_angle, fmax)
+        if transfer is None or adjust is None:
+            continue
+        beta_t, t_transfer = transfer
+        beta_a, t_adjust = adjust
+        if not all(map(math.isfinite, (beta_t, t_transfer, beta_a, t_adjust))):
+            continue
+        # Both burns must fit inside the horizon with coast left over.
+        if t_transfer <= 0.0 or t_adjust <= 0.0 or t_transfer + t_adjust >= tf_sec:
+            continue
+        seeds.append([beta_t, switch_angle, t_transfer / DAY,
+                      beta_a, switch_angle, (tf_sec - t_adjust) / DAY])
+    if not seeds:
+        return None
+
+    bounds = [(math.radians(-179), math.radians(179)),
+              (math.radians(0.3), math.radians(89)),
+              (0.02, tof_days * 0.95),
+              (math.radians(-179), math.radians(179)),
+              (math.radians(0.3), math.radians(89)),
+              (0.02, tof_days * 0.98)]
+
+    args = (a0, incl0, af, inclf, orbit.a_c, orbit.incl_c, raan0, raan_target, tf_sec, fmax)
+
+    def defects(x):
+        d = _defects(x, *args)
+        # RAAN closure is only defined mod 2*pi; an unwrapped residual would
+        # demand whole extra revolutions of nodal drift.
+        d[4] = wrap_pi(d[4])
+        return d
+
+    # The coast must not run backwards: the adjustment arc starts after the
+    # transfer arc ends.
+    constraints = [{"type": "eq", "fun": defects},
+                   {"type": "ineq", "fun": lambda x: x[5] - x[2]}]
+
+    best = None
+    for seed in seeds:
+        res = minimize(_objective, np.asarray(seed, dtype=float),
+                       args=(tf_sec, fmax), method="SLSQP", bounds=bounds,
+                       constraints=constraints, options={"maxiter": 300, "ftol": 1e-10})
+        if np.max(np.abs(defects(res.x))) > feasibility_tol:
+            continue
+        if not math.isfinite(res.fun) or res.fun <= 0.0:
+            continue
+        if best is None or res.fun < best:
+            best = float(res.fun)
+    return best
