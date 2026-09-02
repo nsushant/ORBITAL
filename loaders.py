@@ -12,6 +12,32 @@ snap_cost(cost_table, ...)       -> float
 
 import h5py
 import numpy as np
+import os
+
+
+# ── Evaluation instrumentation (opt-in) ─────────────────────────────────────
+# Set OOS_COUNT_EVALS=1 to count transfer-cost table lookups, the same atomic
+# work unit counted by SNAP_COST_CALLS on the Julia side (sol_utils.jl).
+# Every lookup in pymoo_stuff.py goes through cost_table.get(...), so wrapping
+# the dict catches them all without touching the algorithm code.
+COUNT_EVALS = os.environ.get("OOS_COUNT_EVALS", "0") == "1"
+
+
+class CountingCostTable(dict):
+    """A cost table that tallies lookups. Behaves exactly like the dict."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.n_lookups = 0
+
+    def get(self, key, default=None):
+        self.n_lookups += 1
+        return super().get(key, default)
+
+
+def wrap_cost_table(tbl):
+    """Return a lookup-counting view of `tbl` when OOS_COUNT_EVALS=1."""
+    return CountingCostTable(tbl) if COUNT_EVALS else tbl
 
 
 # ---------------------------------------------------------------------------

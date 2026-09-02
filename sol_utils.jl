@@ -226,6 +226,20 @@ function build_min_dv_table(cost_table, n_nodes)
     return tab
 end
 
+# ── Evaluation instrumentation (opt-in) ─────────────────────────────────────
+# Set OOS_COUNT_EVALS=1 to count work units. COUNT_EVALS is a const Bool, so
+# when unset the branches below constant-fold away and cost nothing.
+#   SNAP_COST_CALLS — transfer-cost table lookups (the atomic work unit shared
+#                     with the Python stack, where the same quantity is counted
+#                     by wrapping the cost-table dict)
+#   FULL_EVALS      — complete objective-vector evaluations of a whole solution,
+#                     the unit pymoo terminates on ("n_eval")
+const COUNT_EVALS     = get(ENV, "OOS_COUNT_EVALS", "0") == "1"
+const SNAP_COST_CALLS = Threads.Atomic{Int}(0)
+const FULL_EVALS      = Threads.Atomic{Int}(0)
+reset_eval_counters!() = (SNAP_COST_CALLS[] = 0; FULL_EVALS[] = 0)
+eval_counters() = (snap_cost_calls = SNAP_COST_CALLS[], full_evals = FULL_EVALS[])
+
 const INFEASIBLE_LEG_COST = 1.0e6
 # Edelbaum tables cover ~400 days (J2 precession period). Override with
 # COST_TABLE_PERIOD if using a longer Lu table (e.g. 1825).
@@ -234,6 +248,7 @@ const COST_TABLE_PERIOD = parse(Float64, get(ENV, "COST_TABLE_PERIOD", "400.0"))
 # For missions longer than COST_TABLE_PERIOD days, wrap departure epoch onto the cost table's
 # time range using modular arithmetic (J2 precession is approximately periodic over ~400 days).
 function snap_cost(CostTable, from_idx, to_idx, dep_epoch, arr_epoch)
+    COUNT_EVALS && Threads.atomic_add!(SNAP_COST_CALLS, 1)
     tof     = arr_epoch - dep_epoch
     dep_w   = mod(dep_epoch, COST_TABLE_PERIOD)
     arr_w   = dep_w + tof

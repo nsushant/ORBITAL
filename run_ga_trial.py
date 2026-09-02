@@ -47,7 +47,8 @@ trial_str = f"{trial:02d}"
 # Imports
 # ---------------------------------------------------------------------------
 
-from loaders import load_sim_name_map, load_demands, load_cost_table_jld2, load_min_tof_table
+from loaders import (load_sim_name_map, load_demands, load_cost_table_jld2,
+                     load_min_tof_table, wrap_cost_table, COUNT_EVALS)
 from pymoo_stuff import OOSProblemRK, OOSProblemRK_OT
 from greedy_init import GreedySamplingRK, GreedySamplingRK2, load_greedy_RK_from_json
 
@@ -80,6 +81,7 @@ REFUEL_TIME  = 0.5   # days — must match MDLS (run_mdls_trial.jl)
 
 d             = load_demands(dem_path)
 ct, ct_meta   = load_cost_table_jld2(COST_FILE)
+ct            = wrap_cost_table(ct)   # counts lookups when OOS_COUNT_EVALS=1
 nm            = load_sim_name_map(SIM_FILE, depot_idx=ct_meta["depot_idx"])
 min_tof_table = load_min_tof_table()
 
@@ -236,6 +238,9 @@ if "nsga3rk" in args.algos:
                            seed=trial, verbose=False, callback=ProgressCallback("nsga3rk"))
     print(f"  done in {time.time()-t0:.1f}s")
     save_front(res_nsga3rk, "nsga3rk", problem=problem_rk)
+    if COUNT_EVALS:
+        print(f"[budget] nsga3rk    full objective evaluations = {res_nsga3rk.algorithm.evaluator.n_eval}"
+              f"  cumulative transfer-cost lookups = {ct.n_lookups}")
 
 # ---------------------------------------------------------------------------
 # Run NSGA-III-RK-OT (random-keys + minimum-cost arrival decoding)
@@ -273,5 +278,8 @@ if "nsga3rk_ot" in args.algos:
                               seed=trial, verbose=False, callback=ProgressCallback("nsga3rk_ot"))
     print(f"  done in {time.time()-t0:.1f}s")
     save_front(res_nsga3rk_ot, "nsga3rk_ot", problem=problem_rk_ot)
+    if COUNT_EVALS:
+        print(f"[budget] nsga3rk_ot full objective evaluations = {res_nsga3rk_ot.algorithm.evaluator.n_eval}"
+              f"  cumulative transfer-cost lookups = {ct.n_lookups}")
 
 print(f"\nAll GAs done for {scenario} trial {trial}.")

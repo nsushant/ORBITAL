@@ -1471,6 +1471,7 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
     dv0 = isempty(init_sol) ? 0.0 : sum(sum(veh.costs) for veh in init_sol)
     us0 = init_unassigned === nothing ? 0.0 :
           sum(get(init_unassigned, "asset_values", init_unassigned["service_times"]))
+    COUNT_EVALS && Threads.atomic_add!(FULL_EVALS, 1)   # the initial solution
     F = Archive([init_sol], [init_unassigned],
                 [dv0], [us0], [length(init_sol)],
                 _init_octree(dv0, us0, length(init_sol), 1))
@@ -1535,6 +1536,7 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
             t === nothing && continue
             op_times[k] += @elapsed begin
                 new_sol, new_u = fetch(t)
+                COUNT_EVALS && Threads.atomic_add!(FULL_EVALS, 1)
                 dv = isempty(new_sol) ? 0.0 : sum(sum(veh.costs) for veh in new_sol)
                 us = new_u === nothing ? 0.0 :
                      sum(get(new_u, "asset_values", new_u["service_times"]))
@@ -1554,6 +1556,10 @@ function MDLS(maxiter, demands, simulation, cost_table, mintof_table, min_dv_tab
           "\n  consolidate = $(round(op_times[1]; digits=2))s" *
           "\n  create_veh  = $(round(op_times[2]; digits=2))s" *
           "\n  dv_ops      = $(round(op_times[3]; digits=2))s"
+    COUNT_EVALS && @info "MDLS evaluation budget consumed:" *
+          "\n  full objective evaluations = $(FULL_EVALS[])" *
+          "\n  transfer-cost lookups      = $(SNAP_COST_CALLS[])" *
+          "\n  iterations                 = $(maxiter)"
     @info "ΔV operator usage:" *
           join(["\n  $(dv_op_names[k]) = $(dv_op_counts[k])" for k in eachindex(dv_op_names)])
 
