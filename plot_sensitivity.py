@@ -5,7 +5,7 @@ For each of 3 sub-experiments produces two PDFs:
   A) HV trend  — median HV ± IQR vs factor level, one line per algorithm
   B) Shadow KDE — KDE contours of ΔV vs unassigned time, one panel per factor level
 
-Run: python plot_sensitivity.py
+Run: python3 plot_sensitivity.py
 """
 
 import os

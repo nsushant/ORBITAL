@@ -4,7 +4,7 @@ plot_shadow_experiments.py — KDE shadow plots for numerical experiment Pareto 
 Three figures (one per pairwise 2D projection), each with 4 subplots (one per scenario).
 KDE contours per algorithm overlaid to show explored objective space.
 
-Run: python plot_shadow_experiments.py
+Run: python3 plot_shadow_experiments.py
 """
 
 import os, glob

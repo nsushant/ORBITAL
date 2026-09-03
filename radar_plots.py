@@ -12,7 +12,7 @@ All axes are normalised to [0, 1] using global bounds across all four
 algorithms, so inner = better, outer = worse.
 
 Output: outputs/radar_plots.html  (interactive Plotly)
-Run:    python radar_plots.py
+Run:    python3 radar_plots.py
 """
 
 import os

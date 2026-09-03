@@ -5,7 +5,7 @@ For each fleet size, pick the cheapest mutually viable equal-BCR contract:
 argmin F* among points with BCR* >= 1. F* equalizes client and operator BCR;
 BCR* is that common value. Slices with no viable point are omitted (nan).
 
-Run: python plot_coverage_fleet.py --h5 outputs/long_horizon_results_edelbaum.h5
+Run: python3 plot_coverage_fleet.py --h5 outputs/long_horizon_results_edelbaum.h5
 """
 
 import os, argparse

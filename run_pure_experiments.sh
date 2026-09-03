@@ -17,7 +17,7 @@ REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 N_EVAL=${N_EVAL:-20000}
 SCENARIOS="tight_normal loose_uniform tight_low_dv loose_high_dv"
 JULIA="julia --project=. -t auto"
-PYTHON="python"
+PYTHON="python3"
 DEM_DIR="outputs/exp_demands"
 RES_DIR="outputs/pure_results"
 

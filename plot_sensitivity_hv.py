@@ -5,7 +5,7 @@ Numeric sub-experiments → line plot with median + IQR shading.
 Categorical sub-experiments → grouped box plots.
 All panels combined in one figure with shared legend at top.
 
-Run: python plot_sensitivity_hv.py
+Run: python3 plot_sensitivity_hv.py
 """
 
 import os, glob

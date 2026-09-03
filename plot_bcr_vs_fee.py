@@ -9,7 +9,7 @@ BCR* >= 1), plot:
 
 They meet at F*. Optional --f3 restricts the pick to that fleet size.
 
-Run: python plot_bcr_vs_fee.py --h5 outputs/long_horizon_results_edelbaum.h5
+Run: python3 plot_bcr_vs_fee.py --h5 outputs/long_horizon_results_edelbaum.h5
 """
 
 import os, argparse

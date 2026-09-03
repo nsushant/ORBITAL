@@ -13,7 +13,7 @@ set -euo pipefail
 
 N_TRIALS=${N_TRIALS:-5}
 N_EVAL=${N_EVAL:-10000}
-PYTHON="python"
+PYTHON="python3"
 DEM_DIR="outputs/sensitivity_demands"
 RES_DIR="outputs/pure_sensitivity_results"
 H5_FILE="outputs/pure_sensitivity_results.h5"

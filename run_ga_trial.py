@@ -1,6 +1,6 @@
 """
 run_ga_trial.py — run NSGA-III, MOEA-D, and PSO on one (scenario, trial) pair.
-CLI: python run_ga_trial.py <scenario> <trial>
+CLI: python3 run_ga_trial.py <scenario> <trial>
 
 Reads:  outputs/exp_demands/{scenario}_{trial:02d}.jld2
         outputs/exp_demands/{scenario}_{trial:02d}_greedy.json

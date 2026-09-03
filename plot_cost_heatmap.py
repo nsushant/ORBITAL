@@ -6,9 +6,9 @@ departure × arrival time. Visually confirms whether the AMR grid is
 non-uniform (dense where gradients are steep, sparse where flat).
 
 Usage:
-    python plot_cost_heatmap.py               # depot(301) → sat_1(1)
-    python plot_cost_heatmap.py 301 50        # depot → sat_50
-    python plot_cost_heatmap.py 1 2           # sat_1 → sat_2
+    python3 plot_cost_heatmap.py               # depot(301) → sat_1(1)
+    python3 plot_cost_heatmap.py 301 50        # depot → sat_50
+    python3 plot_cost_heatmap.py 1 2           # sat_1 → sat_2
 """
 
 import sys

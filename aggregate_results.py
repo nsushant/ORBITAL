@@ -33,7 +33,7 @@ N_TRIALS   = 5
 
 # Paths are CLI-overridable so pure / sensitivity results can be aggregated
 # without editing this file. Defaults reproduce the original behaviour.
-#   e.g.  python aggregate_results.py --res-dir outputs/pure_results --out-dir outputs/pure_results
+#   e.g.  python3 aggregate_results.py --res-dir outputs/pure_results --out-dir outputs/pure_results
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--res-dir",  default="outputs/exp_results", help="dir with per-trial CSVs")
 _ap.add_argument("--out-dir",  default="outputs",             help="dir for aggregated outputs")

@@ -230,4 +230,4 @@ for (k, (a_km, inc_deg)) in enumerate(grid)
 end
 
 @info "Sweep done" elapsed_min=round((time() - t_all) / 60; digits=1) h5=H5_OUT
-println("Plot: python plot_depot_bcr_map.py --h5 $H5_OUT")
+println("Plot: python3 plot_depot_bcr_map.py --h5 $H5_OUT")

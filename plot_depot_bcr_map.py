@@ -5,7 +5,7 @@ At each location, pick the cheapest mutually viable equal-BCR contract:
 argmin F* among Pareto points with BCR* >= 1. Colour is that F* [$M].
 Black = no such point.
 
-Run: python plot_depot_bcr_map.py --h5 outputs/depot_location_sweep.h5
+Run: python3 plot_depot_bcr_map.py --h5 outputs/depot_location_sweep.h5
 """
 
 import os, argparse

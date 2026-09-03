@@ -15,7 +15,7 @@ N_TRIALS=${N_TRIALS:-5}
 REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 SCENARIOS="tight_normal loose_uniform tight_low_dv loose_high_dv"
 JULIA="julia --project=. -t auto"
-PYTHON="python"
+PYTHON="python3"
 
 mkdir -p outputs/exp_demands outputs/exp_results
 

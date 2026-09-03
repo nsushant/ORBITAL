@@ -5,7 +5,7 @@ For each sat_1..sat_N in outputs/simulation.h5, finds the closest matching entry
 in starlink/starlink_catalog.json by (inclination, RAAN) and outputs a LaTeX
 table of OBJECT_NAME, NORAD_CAT_ID, COSPAR ID, shell, inclination, altitude, RAAN.
 
-Run: python starlink/export_selected_sats.py
+Run: python3 starlink/export_selected_sats.py
 """
 
 import json, math, os

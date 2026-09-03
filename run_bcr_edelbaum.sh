@@ -34,7 +34,7 @@ $JULIA run_mdls_trial.jl "bcr_mixed_${BUDGET}" "$TRIAL" "$DEM_DIR" "$RES_DIR" "$
 
 echo ""
 echo "Done. Results in $H5_FILE"
-echo "Plot: python plot_bcr_architecture.py --h5 $H5_FILE --out-dir $RES_DIR"
-echo "      python plot_coverage_fleet.py --h5 $H5_FILE --out-dir $RES_DIR"
-echo "      python plot_bcr_mass_trade.py --h5 $H5_FILE --out-dir $RES_DIR"
-echo "      python plot_bcr_vs_fee.py --h5 $H5_FILE --out-dir $RES_DIR"
+echo "Plot: python3 plot_bcr_architecture.py --h5 $H5_FILE --out-dir $RES_DIR"
+echo "      python3 plot_coverage_fleet.py --h5 $H5_FILE --out-dir $RES_DIR"
+echo "      python3 plot_bcr_mass_trade.py --h5 $H5_FILE --out-dir $RES_DIR"
+echo "      python3 plot_bcr_vs_fee.py --h5 $H5_FILE --out-dir $RES_DIR"

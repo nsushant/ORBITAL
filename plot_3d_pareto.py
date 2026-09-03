@@ -5,7 +5,7 @@ Produces:
   outputs/pareto_3d_scenarios.pdf  — 2×2 grid, one panel per demand scenario (best trial)
   outputs/pareto_3d_starlink.pdf   — single panel for the Starlink propulsion study (best trial)
 
-Run: python plot_3d_pareto.py
+Run: python3 plot_3d_pareto.py
 """
 
 import os

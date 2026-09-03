@@ -3,7 +3,7 @@ plot_depot_bcr_maps_thrust.py — depot BCR* maps at several thrust levels.
 
 Rows = clients, columns = thrust tags.
 
-  python plot_depot_bcr_maps_thrust.py --tags 10mN 100mN 1N
+  python3 plot_depot_bcr_maps_thrust.py --tags 10mN 100mN 1N
 """
 
 import os, argparse

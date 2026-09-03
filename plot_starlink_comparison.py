@@ -9,7 +9,7 @@ fallback when there are too few points. Hypervolume is computed with moocore
 using a fixed reference point derived from MDLS only, so penalty-inflated
 NSGA-III solutions don't distort the comparison.
 
-Run: python plot_starlink_comparison.py
+Run: python3 plot_starlink_comparison.py
 """
 
 import pandas as pd

@@ -5,8 +5,8 @@ Each row = one servicer vehicle.
 Bars: transit legs (grey), service visits (coloured by satellite),
       intermediate depot visits (orange).
 
-Run (knee):     python plot_gantt.py
-Run (max-cov):  python plot_gantt.py --mdls outputs/maxcov_schedule_MDLS.json
+Run (knee):     python3 plot_gantt.py
+Run (max-cov):  python3 plot_gantt.py --mdls outputs/maxcov_schedule_MDLS.json
                                      --nsga outputs/maxcov_schedule_NSGA-III.json
                                      --out  outputs/gantt_maxcov.pdf
 """

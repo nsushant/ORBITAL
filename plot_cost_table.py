@@ -2,8 +2,8 @@
 plot_cost_table.py — pixel map of ΔV cost for a single (origin, dest) pair.
 
 Usage:
-  python plot_cost_table.py depot_1 sat_1
-  python plot_cost_table.py sat_5 depot_1
+  python3 plot_cost_table.py depot_1 sat_1
+  python3 plot_cost_table.py sat_5 depot_1
 """
 
 import sys, os

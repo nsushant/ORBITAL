@@ -5,7 +5,7 @@ For each sub-experiment: one figure with rows = algorithms, cols = factor levels
 Each panel shows the normalised Pareto front (all trials overlaid as scatter).
 Mirrors the layout of plot_pure_pareto.py.
 
-Run: python plot_sensitivity_pareto.py
+Run: python3 plot_sensitivity_pareto.py
 """
 
 import os, glob

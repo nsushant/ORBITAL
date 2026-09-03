@@ -2,7 +2,7 @@
 plot_pareto.py — Histograms of Pareto front solution distributions in
 normalised objective space, using pareto_fronts.csv from numerical experiments.
 
-Run: python plot_pareto.py
+Run: python3 plot_pareto.py
 """
 
 import pandas as pd

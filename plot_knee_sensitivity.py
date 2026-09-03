@@ -8,7 +8,7 @@ Produces 3 PDFs (one per sub-experiment), matching the layout of sensitivity_hv_
   - Numeric factors (size, dv): line + IQR band per algorithm vs factor level
   - Categorical factor (disttype): grouped boxplot per level
 
-Run: python plot_knee_sensitivity.py
+Run: python3 plot_knee_sensitivity.py
 """
 
 import os

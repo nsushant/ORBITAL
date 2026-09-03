@@ -2,7 +2,7 @@
 run_ga_sensitivity.py — run NSGA-III or NSGA-III-T with a single OAT parameter override.
 
 CLI:
-  python run_ga_sensitivity.py <key> <trial> <algo> <param_name> <param_level> <h5_file>
+  python3 run_ga_sensitivity.py <key> <trial> <algo> <param_name> <param_level> <h5_file>
                                [--demand-dir DIR] [--dv-budget FLOAT] [--n-eval INT]
 
 algo       : nsga3rk | nsga3rk_ot

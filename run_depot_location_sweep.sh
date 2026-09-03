@@ -31,7 +31,7 @@ echo "── Depot (a, i) MDLS sweep ──"
 $JULIA sweep_depot_location.jl
 
 echo "── Plot implied-contract F* map (knee, BCR* ≥ 1) ──"
-python plot_depot_bcr_map.py --h5 "$H5" --out-dir "$OUT_DIR"
+python3 plot_depot_bcr_map.py --h5 "$H5" --out-dir "$OUT_DIR"
 
 echo ""
 echo "Done. Map: $OUT_DIR/depot_bcr_map.pdf"

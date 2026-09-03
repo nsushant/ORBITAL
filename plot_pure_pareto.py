@@ -5,7 +5,7 @@ Reads CSVs directly from outputs/pure_results/ (no aggregation step needed).
 Produces one PDF per scenario with one panel per algorithm, showing the
 normalised Pareto front across all trials.
 
-Run: python plot_pure_pareto.py
+Run: python3 plot_pure_pareto.py
 """
 
 import os, glob

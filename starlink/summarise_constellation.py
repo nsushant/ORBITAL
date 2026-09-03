@@ -8,7 +8,7 @@ an Acta Astronautica–compliant LaTeX table.
 Columns per shell:
   Inc (°) | Alt (km) | SMA (km) | N selected | RAAN range (°) | N planes covered
 
-Run: python starlink/summarise_constellation.py
+Run: python3 starlink/summarise_constellation.py
 """
 
 import math, os

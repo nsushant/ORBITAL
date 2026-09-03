@@ -15,7 +15,7 @@ SCENARIO="tight_low_dv"
 DV_BUDGET=5000.0
 DEM_DIR="outputs/exp_demands"
 H5_FILE="outputs/sensitivity_oat.h5"
-PYTHON="python"
+PYTHON="python3"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -58,5 +58,5 @@ done
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  Done. Plot with: python plot_sensitivity_oat.py        ║"
+echo "║  Done. Plot with: python3 plot_sensitivity_oat.py        ║"
 echo "╚══════════════════════════════════════════════════════════╝"

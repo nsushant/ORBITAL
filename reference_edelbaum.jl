@@ -16,12 +16,26 @@ const RE_STD = 6378.137
 
 # Same population and draw as the Python side: read the instance population and
 # take ordered pairs from a fixed seed so both stacks see identical geometries.
+# Columns are looked up by header name, not by position. They used to be read
+# positionally, and when the population gained the full orbital element set the
+# script started parsing an object name as a semi-major axis and died with
+# `cannot parse "STARLINK-3801" as Float64`. A named lookup fails loudly and
+# specifically if the schema moves again.
 pop = Tuple{Float64,Float64}[]
 open(joinpath(@__DIR__, "outputs", "instance_population.csv")) do io
-    readline(io)                                   # header
+    header = split(strip(readline(io)), ',')
+    col = Dict(strip(h) => k for (k, h) in enumerate(header))
+    for c in ("a_km", "incl_deg")
+        haskey(col, c) || error("instance_population.csv has no '$c' column; " *
+                                "found: " * join(header, ", "))
+    end
+    ia, ii = col["a_km"], col["incl_deg"]
     for line in eachline(io)
+        isempty(strip(line)) && continue
         f = split(line, ',')
-        push!(pop, (parse(Float64, f[2]), deg2rad(parse(Float64, f[3]))))
+        # The depot is a node of the simulation, not a transfer endpoint here.
+        haskey(col, "group") && strip(f[col["group"]]) == "depot" && continue
+        push!(pop, (parse(Float64, f[ia]), deg2rad(parse(Float64, f[ii]))))
     end
 end
 @info "population" n=length(pop)

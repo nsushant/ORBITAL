@@ -7,7 +7,7 @@ Panel 1 (shadow_dv_vs_unassigned.pdf):
 Panel 2 (shadow_dv_vs_vehicles.pdf):
   4 subplots (one per instance) — ΔV vs vehicles used, KDE per algorithm.
 
-Run: python plot_shadow.py
+Run: python3 plot_shadow.py
 """
 
 import pandas as pd

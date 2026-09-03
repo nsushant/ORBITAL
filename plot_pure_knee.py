@@ -7,7 +7,7 @@ Knee point = solution closest to ideal [0,0,0] in normalised objective space:
 One box per algorithm per scenario, showing knee point distance across trials.
 Also produces per-objective knee value box plots.
 
-Run: python plot_pure_knee.py
+Run: python3 plot_pure_knee.py
 """
 
 import os, glob

@@ -4,7 +4,7 @@ plot_pure_hv.py — HV box plots for pure-comparison experiments.
 Reads CSVs from outputs/pure_results/, computes normalised hypervolume per
 (scenario, algo, trial), and produces box plots grouped by scenario.
 
-Run: python plot_pure_hv.py
+Run: python3 plot_pure_hv.py
 """
 
 import os, glob

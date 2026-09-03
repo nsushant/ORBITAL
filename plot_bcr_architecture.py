@@ -4,7 +4,7 @@ plot_bcr_architecture.py — Pareto scatter coloured by implied-contract BCR*.
 One panel per client. x = fleet size, y = that client's unrecovered value [$M],
 colour = BCR* (RdYlGn, centred at 1).
 
-Run: python plot_bcr_architecture.py --h5 outputs/long_horizon_results_edelbaum.h5
+Run: python3 plot_bcr_architecture.py --h5 outputs/long_horizon_results_edelbaum.h5
 """
 
 import os, argparse

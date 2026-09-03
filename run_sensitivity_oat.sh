@@ -20,7 +20,7 @@ DEM_DIR="outputs/exp_demands"
 H5_FILE="outputs/sensitivity_oat.h5"
 
 JULIA="julia --project=."
-PYTHON="python"
+PYTHON="python3"
 
 FILTER=("$@")
 
@@ -142,5 +142,5 @@ fi
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Done. Results in $H5_FILE                              ║"
-echo "║  Plot with: python plot_sensitivity_oat.py              ║"
+echo "║  Plot with: python3 plot_sensitivity_oat.py              ║"
 echo "╚══════════════════════════════════════════════════════════╝"

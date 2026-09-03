@@ -5,7 +5,7 @@ Uses the max-coverage (min mix-f2) solution. Manufacturing is independent of
 dry mass; launch and xenon still scale with wet mass, so C(m) and thus BCR*
 move with m.
 
-Run: python plot_bcr_mass_trade.py --h5 outputs/long_horizon_results_edelbaum.h5
+Run: python3 plot_bcr_mass_trade.py --h5 outputs/long_horizon_results_edelbaum.h5
 """
 
 import os, argparse

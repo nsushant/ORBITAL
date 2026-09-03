@@ -6,7 +6,7 @@ Operator BCR = F / (C + C_dv)
 Both = 1 ⇒ F* = R - U and C = F* - C_dv. Xenon is negligible, so C ≈ F*
 and a C map would duplicate F*. Right panel is coverage of the same point.
 
-Run: python plot_contract_budget.py --h5 outputs/depot_location_sweep.h5
+Run: python3 plot_contract_budget.py --h5 outputs/depot_location_sweep.h5
 """
 
 import os, argparse

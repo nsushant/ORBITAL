@@ -15,7 +15,7 @@ Output: outputs/architecture_bcr_vs_propellant.pdf
   x-axis: propellant per vehicle per sortie [kg]
   y-axis: BCR
 
-Run: python plot_propulsion_trade.py
+Run: python3 plot_propulsion_trade.py
 """
 
 import os, math
