@@ -37,7 +37,7 @@ julia --project=. -t auto run_mdls_trial.jl "$SCEN" "$TRIAL" 2>&1 \
   echo "--- NSGA-III and NSGA-III-T (Python, n_eval=10000 cap) ---"
 } >> "$OUT"
 
-python3 run_ga_trial.py "$SCEN" "$TRIAL" 2>&1 \
+python run_ga_trial.py "$SCEN" "$TRIAL" 2>&1 \
   | grep -E "^\[budget\]" >> "$OUT"
 
 echo

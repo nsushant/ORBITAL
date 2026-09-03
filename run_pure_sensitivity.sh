@@ -19,7 +19,7 @@ N_TRIALS=${N_TRIALS:-5}
 REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 N_EVAL=${N_EVAL:-10000}
 JULIA="julia --project=. -t auto"
-PYTHON="python3"
+PYTHON="python"
 DEM_DIR="outputs/sensitivity_demands"
 RES_DIR="outputs/pure_sensitivity_results"
 H5_FILE="outputs/pure_sensitivity_results.h5"
@@ -152,6 +152,6 @@ echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Done. Raw CSVs in $RES_DIR                             ║"
 echo "║  After aggregating, run:                                ║"
-echo "║    python3 plot_sensitivity.py                           ║"
-echo "║    python3 plot_knee_sensitivity.py                      ║"
+echo "║    python plot_sensitivity.py                           ║"
+echo "║    python plot_knee_sensitivity.py                      ║"
 echo "╚══════════════════════════════════════════════════════════╝"

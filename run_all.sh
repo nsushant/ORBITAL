@@ -30,10 +30,10 @@ mkdir -p "$NUMBA_CACHE_DIR"
 # ---------------------------------------------------------------------------
 if run_stage 0; then
 banner 0 "gates -- run these before trusting anything below"
-python3 tests/test_propagate.py
-python3 tests/test_edelbaum.py
-python3 tests/test_guards.py
-python3 tests/test_fastpath.py
+python tests/test_propagate.py
+python tests/test_edelbaum.py
+python tests/test_guards.py
+python tests/test_fastpath.py
 fi
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ banner 1 "instance population from the cached CelesTrak catalogues (seconds)"
 # 100 Starlink sampled proportionally across shells at <=2 per 5-degree RAAN
 # plane, plus the full 124-object Planet Labs catalogue, plus the nominal depot.
 # Shell counts should come out 49 / 3 / 29 / 19 / 0, matching Table 2.
-python3 build_instance.py --out outputs/instance_population.csv
+python build_instance.py --out outputs/instance_population.csv
 fi
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ if run_stage 2; then
 banner 2 "propagate the ephemeris, RK4 + J2, 400 days (about 10 seconds)"
 # dt = 10 s, not the 60 s the Julia used: over 400 days a 60 s step invents
 # 11 km of semi-major-axis decay and 4.4 degrees of RAAN. Hourly records.
-python3 -m oos.propagate \
+python -m oos.propagate \
     --population outputs/instance_population.csv \
     --out        outputs/simulation.h5 \
     --days 400 --dt 10 --write-every 360
@@ -68,7 +68,7 @@ banner 3 "client-to-client cost table (about 18 minutes)"
 # fewer transfer solves. The runtime is all Planet Labs, which has no plane
 # lattice (rideshare-deployed, spread over 352-604 km, RAAN-close objects 15-66
 # km apart in altitude) so each of its 124 satellites is its own plane.
-python3 -m oos.costtable \
+python -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5
 fi
@@ -83,7 +83,7 @@ banner 3b "transfer-model cross-validation for Section 3.2.6 (tens of minutes)"
 # Lu model is outside its domain at large inclination separation, so a small
 # sample leaves too few paired points to quote a mean from. Section 3.2.6 should
 # state the sample size it ends up with.
-python3 crossvalidate_transfer_models.py \
+python crossvalidate_transfer_models.py \
     --population outputs/instance_population.csv \
     --n 500 \
     --out outputs/xval_spacevan.csv
@@ -123,7 +123,7 @@ banner 5 "depot-selection MILP (gurobipy, seconds)"
 # Fewest sampled depot locations holding unserved client value under a bound,
 # each depot operated at the maximum-coverage point of its own Pareto front.
 # Sweeping the bound gives the depots-versus-replacement curve.
-python3 -m oos.depot_milp \
+python -m oos.depot_milp \
     --sweep outputs/depot_sweep.h5 \
     --out   outputs/depot_selection.csv \
     --fractions 0.0,0.05,0.10,0.20,0.30,0.40,0.50

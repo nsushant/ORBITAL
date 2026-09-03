@@ -16,7 +16,7 @@ set -euo pipefail
 N_TRIALS=${N_TRIALS:-5}
 REGEN_DEMANDS=${REGEN_DEMANDS:-false}
 JULIA="julia --project=. -t auto"
-PYTHON="python3"
+PYTHON="python"
 DEM_DIR="outputs/sensitivity_demands"
 RES_DIR="outputs/sensitivity_results"
 
@@ -146,6 +146,6 @@ $PYTHON aggregate_sensitivity.py
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Done. Run:                                             ║"
-echo "║    python3 plot_sensitivity.py                           ║"
-echo "║    python3 plot_knee_sensitivity.py                      ║"
+echo "║    python plot_sensitivity.py                           ║"
+echo "║    python plot_knee_sensitivity.py                      ║"
 echo "╚══════════════════════════════════════════════════════════╝"

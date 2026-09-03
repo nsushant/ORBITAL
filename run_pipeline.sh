@@ -13,7 +13,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUTS_DIR="$PROJECT_DIR/outputs"
 PYTHON_DIR="$PROJECT_DIR/multi_objectove_GA_tests"
 
-PYTHON="/Users/sushantnigudkar/miniforge3/bin/python3"
+PYTHON="/Users/sushantnigudkar/miniforge3/bin/python"
 
 # Compute GA pop_size: use full 91 for budget >= 4550, scale down for smaller budgets
 POP_SIZE=$(( BUDGET / 50 ))

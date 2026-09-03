@@ -17,7 +17,7 @@ DEM="outputs/long_horizon_demands/bcr_mixed_7000_01.jld2"
 THRUSTS="${THRUSTS:-0.01 0.1 1.0}"
 
 thrust_tag() {
-    python3 -c "t=float('$1'); print(f'{t:.0f}N' if t>=0.999 else f'{t*1e3:.0f}mN')"
+    python -c "t=float('$1'); print(f'{t:.0f}N' if t>=0.999 else f'{t*1e3:.0f}mN')"
 }
 
 if [ ! -f "$DEM" ]; then
@@ -65,12 +65,12 @@ for T in $THRUSTS; do
     $JULIA sweep_depot_location.jl
 
     echo "── Plot ${tag} ──"
-    python3 plot_depot_bcr_map.py --h5 "$h5" --out-dir "$res" --title "$(python3 -c "t='$tag'; print(t[:-2]+' mN' if t.endswith('mN') else t[:-1]+' N' if t.endswith('N') else t)")"
+    python plot_depot_bcr_map.py --h5 "$h5" --out-dir "$res" --title "$(python -c "t='$tag'; print(t[:-2]+' mN' if t.endswith('mN') else t[:-1]+' N' if t.endswith('N') else t)")"
 done
 
 echo ""
 echo "── Combined thrust panel ──"
-python3 plot_depot_bcr_maps_thrust.py --tags "${tags[@]}"
+python plot_depot_bcr_maps_thrust.py --tags "${tags[@]}"
 
 echo ""
 echo "Done. Combined: outputs/depot_location_sweep/depot_bcr_maps_thrust.pdf"

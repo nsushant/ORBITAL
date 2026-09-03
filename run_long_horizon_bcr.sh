@@ -29,4 +29,4 @@ done
 
 echo ""
 echo "Done. Results in $H5_FILE"
-echo "Run: python3 plot_bcr_architecture.py --h5 $H5_FILE"
+echo "Run: python plot_bcr_architecture.py --h5 $H5_FILE"

@@ -19,7 +19,7 @@ set -euo pipefail
 N_TRIALS=${N_TRIALS:-5}
 REGEN_DEMANDS=${REGEN_DEMANDS:-true}
 JULIA="julia --project=. -t auto"
-PYTHON="python3"
+PYTHON="python"
 DEM_DIR="outputs/long_horizon_demands"
 RES_DIR="outputs/long_horizon_results"
 H5_FILE="outputs/long_horizon_results.h5"
