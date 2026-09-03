@@ -35,6 +35,7 @@ python tests/test_edelbaum.py
 python tests/test_guards.py
 python tests/test_fastpath.py
 python tests/test_schedule.py
+python tests/test_archive.py
 fi
 
 # ---------------------------------------------------------------------------
