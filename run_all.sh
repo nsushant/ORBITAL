@@ -5,6 +5,7 @@
 #   bash run_all.sh            run every stage that is ready
 #   bash run_all.sh 3          run from stage 3 onwards
 #   bash run_all.sh 3 3        run stage 3 only
+#   XVAL=1 bash run_all.sh 9 9 run only the Section 3.2.6 cross-validation
 #
 # Stages 1-3 rebuild the instance from scratch and are the long pole. Stage 4
 # is not runnable yet: it needs the Python MDLS, which is not ported. See the
@@ -70,6 +71,22 @@ banner 3 "client-to-client cost table (HOURS -- see note)"
 python3 -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5
+fi
+
+# ---------------------------------------------------------------------------
+if run_stage 3.5 2>/dev/null || { [ "$FROM" -le 3 ] && [ "$TO" -ge 3 ]; }; then :; fi
+if [ "${XVAL:-0}" = "1" ]; then
+banner 3b "transfer-model cross-validation for Section 3.2.6 (tens of minutes)"
+# Independent of the cost table, so it can run any time. The Lu NLP is the slow
+# part. Use a large --n: on the current population most sampled geometries are
+# not comparable, either because the servicer cannot afford them or because the
+# Lu model is outside its domain at large inclination separation, so a small
+# sample leaves too few paired points to quote a mean from. Section 3.2.6 should
+# state the sample size it ends up with.
+python3 crossvalidate_transfer_models.py \
+    --population outputs/instance_population.csv \
+    --n 500 \
+    --out outputs/xval_spacevan.csv
 fi
 
 # ---------------------------------------------------------------------------

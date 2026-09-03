@@ -39,13 +39,20 @@ import os
 
 import numpy as np
 
+from oos import servicer
 from oos.edelbaum import transfer_dv
 from oos.lu import coasting_orbit_estimate, raan_drift_rate, transfer_cost_nlp
 
-# Servicer of Section 3.2.1: Otter-class, 335 kg, gridded ion at 10 mN, Isp 2800 s.
-MASS = 335.0
-ISP = 2800.0
-THRUST = 1e-5          # kg*km/s^2 = 10 mN
+# The servicer of Section 3.2.1, read from oos.servicer rather than restated.
+# It used to be restated here as an Otter-class 335 kg / 2800 s / 10 mN vehicle,
+# and when Section 3.2.1 became the Exotrail spacevan this file went on
+# comparing the old one at a third of the thrust acceleration -- quietly
+# invalidating the numbers Section 3.2.6 quotes. The comparison is sensitive to
+# it: the gap between the two models is set by how long the arcs take relative
+# to the drift phase, and arc duration scales with 1/f.
+MASS = servicer.MASS
+ISP = servicer.ISP
+THRUST = servicer.THRUST
 
 
 def load_population(path):
@@ -167,8 +174,9 @@ def main():
     p.add_argument("--n", type=int, default=100)
     p.add_argument("--tof-min", type=float, default=30.0)
     p.add_argument("--tof-max", type=float, default=365.0)
-    p.add_argument("--thrust-mn", type=float, default=10.0,
-                   help="servicer thrust [mN]; the paper's Otter-class vehicle is 10")
+    p.add_argument("--thrust-mn", type=float, default=servicer.THRUST_N * 1e3,
+                   help="servicer thrust [mN]; defaults to the vehicle of "
+                        "Section 3.2.1, currently %(default)g")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="outputs/transfer_model_crossvalidation.csv")
     args = p.parse_args()
