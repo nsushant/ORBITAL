@@ -191,12 +191,55 @@ def propagate(r0, v0, dt, n_steps, write_every, use_j2):
     pos = np.empty((n_nodes, n_rec, 3))
     vel = np.empty((n_nodes, n_rec, 3))
     oe = np.empty((n_nodes, n_rec, 5))
+    # Mean elements and secular rates, accumulated over *every* integration step.
+    # They cannot be recovered from the hourly records afterwards: the orbit is
+    # 1.59 h, so an hourly grid is below Nyquist for the J2 short-period terms
+    # and time-averaging it is biased by where in its orbit each satellite
+    # happens to sit. Two satellites in one plane then come out with mean
+    # semi-major axes 19 km apart and nodal rates differing by enough to drift
+    # 13 degrees over the horizon, which is nonsense: they are the same orbit.
+    secular = np.empty((n_nodes, 6))     # mean a, mean incl, raan0, raan rate, u0, u rate
 
     for i in prange(n_nodes):
         rx, ry, rz = r0[i, 0], r0[i, 1], r0[i, 2]
         vx, vy, vz = v0[i, 0], v0[i, 1], v0[i, 2]
         rec = 0
+        sum_a = 0.0
+        sum_i = 0.0
+        n_acc = 0
+        # Running unwrapped angles, plus the sums a least-squares line needs.
+        w_prev = 0.0
+        u_prev = 0.0
+        w_un = 0.0
+        u_un = 0.0
+        s_t = 0.0
+        s_tt = 0.0
+        s_w = 0.0
+        s_tw = 0.0
+        s_u = 0.0
+        s_tu = 0.0
+
         for step in range(n_steps):
+            t_now = step * dt
+            a_s, i_s, w_s, _, u_s = oelem_from_rv(rx, ry, rz, vx, vy, vz)
+            if step == 0:
+                w_un = w_s
+                u_un = u_s
+            else:
+                w_un += (w_s - w_prev + np.pi) % (2.0 * np.pi) - np.pi
+                u_un += (u_s - u_prev + np.pi) % (2.0 * np.pi) - np.pi
+            w_prev = w_s
+            u_prev = u_s
+            sum_a += a_s
+            sum_i += i_s
+            n_acc += 1
+            s_t += t_now
+            s_tt += t_now * t_now
+            s_w += w_un
+            s_tw += t_now * w_un
+            s_u += u_un
+            s_tu += t_now * u_un
+
             if step % write_every == 0 and rec < n_rec:
                 pos[i, rec, 0] = rx
                 pos[i, rec, 1] = ry
@@ -244,8 +287,22 @@ def propagate(r0, v0, dt, n_steps, write_every, use_j2):
             vy += s * (k1vy + 2.0 * k2vy + 2.0 * k3vy + k4vy)
             vz += s * (k1vz + 2.0 * k2vz + 2.0 * k3vz + k4vz)
 
+        denom = n_acc * s_tt - s_t * s_t
+        secular[i, 0] = sum_a / n_acc
+        secular[i, 1] = sum_i / n_acc
+        if denom != 0.0:
+            secular[i, 3] = (n_acc * s_tw - s_t * s_w) / denom
+            secular[i, 2] = (s_w - secular[i, 3] * s_t) / n_acc
+            secular[i, 5] = (n_acc * s_tu - s_t * s_u) / denom
+            secular[i, 4] = (s_u - secular[i, 5] * s_t) / n_acc
+        else:
+            secular[i, 2] = w_un
+            secular[i, 3] = 0.0
+            secular[i, 4] = u_un
+            secular[i, 5] = 0.0
+
     times = np.arange(n_rec) * (dt * write_every)
-    return pos, vel, oe, times
+    return pos, vel, oe, times, secular
 
 
 def mean_to_true(mean_anom, ecc, tol=1e-12, itmax=50):
@@ -263,7 +320,7 @@ def mean_to_true(mean_anom, ecc, tol=1e-12, itmax=50):
 
 
 def load_population(path):
-    names, states = [], []
+    names, states, planes = [], [], []
     with open(path) as fh:
         for row in csv.DictReader(fh):
             ecc = float(row["ecc"])
@@ -274,9 +331,12 @@ def load_population(path):
                                   math.radians(float(row["argp_deg"])), nu)
             names.append(row["name"])
             states.append((r, v))
+            # The plane a node belongs to is a property of the instance, not
+            # something to be rediscovered downstream with a tolerance.
+            planes.append(int(row["plane"]) if row.get("plane", "") != "" else -1)
     r0 = np.array([s[0] for s in states])
     v0 = np.array([s[1] for s in states])
-    return names, r0, v0
+    return names, r0, v0, np.array(planes, dtype=np.int64)
 
 
 def main():
@@ -292,15 +352,15 @@ def main():
 
     import h5py
 
-    names, r0, v0 = load_population(args.population)
+    names, r0, v0, planes = load_population(args.population)
     n_steps = int(round(args.days * 86400.0 / args.dt))
     n_rec = n_steps // args.write_every
     print(f"nodes {len(names)}   steps {n_steps}   records {n_rec}   "
           f"record spacing {args.dt * args.write_every / 3600:.3f} h")
 
     t0 = time.time()
-    pos, vel, oe, times = propagate(r0, v0, args.dt, n_steps,
-                                    args.write_every, not args.no_j2)
+    pos, vel, oe, times, secular = propagate(r0, v0, args.dt, n_steps,
+                                            args.write_every, not args.no_j2)
     print(f"propagation took {time.time() - t0:.1f} s")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
@@ -308,6 +368,11 @@ def main():
         g = f.create_group("metadata")
         g.create_dataset("names", data=np.array(names, dtype="S32"))
         g.create_dataset("times", data=times)
+        g.create_dataset("plane_of_node", data=planes)
+        # Mean elements and secular rates, from every integration step.
+        for k, key in enumerate(("mean_a", "mean_incl", "raan0", "raan_rate",
+                                 "u0", "u_rate")):
+            g.create_dataset(key, data=secular[:, k])
         g.attrs["J2"] = np.uint8(0 if args.no_j2 else 1)
         g.attrs["dt"] = args.dt
         g.attrs["t_end"] = args.days * 86400.0

@@ -58,17 +58,16 @@ fi
 
 # ---------------------------------------------------------------------------
 if run_stage 3; then
-banner 3 "client-to-client cost table"
-# Solved per constellation plane, then copied to every client with its own
-# phasing. Exact: plane-mates share a, inclination and RAAN, so they share their
-# node at every epoch and need an identical transfer.
+banner 3 "client-to-client cost table (about 18 minutes)"
+# Solved once per ordered pair of constellation planes, then copied to every
+# client in those planes with that client's own phasing. Exact, with no
+# tolerance: plane membership is declared by build_instance.py, not
+# rediscovered here.
 #
-# The speedup is set by how many sampled clients share a plane, and for this
-# instance that is almost none -- 214 planes from 225 nodes, so about 1.1x.
-# fetch_and_sample.jl takes at most 2 per plane and spreads across 5-degree RAAN
-# bins, so sampled satellites nearly always land in distinct planes. Expect
-# roughly 45 minutes. Sampling more clients per plane would cut this sharply and
-# is a modelling decision, not a tuning one.
+# The Starlink half is essentially free -- 224 satellites on 14 planes is 295x
+# fewer transfer solves. The runtime is all Planet Labs, which has no plane
+# lattice (rideshare-deployed, spread over 352-604 km, RAAN-close objects 15-66
+# km apart in altitude) so each of its 124 satellites is its own plane.
 python3 -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5

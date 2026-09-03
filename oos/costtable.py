@@ -80,32 +80,26 @@ def _wrap_pi(x):
     return x - 2.0 * np.pi * np.round(x / (2.0 * np.pi))
 
 
-def find_planes(a, incl, raan0, da_tol=0.5, di_tol=5e-5, draan_tol=3.5e-4):
-    """Collapse nodes to constellation planes on (a, inclination, RAAN).
+def planes_from_instance(pid, a, incl, raan0):
+    """Representative elements for each plane the instance declares.
 
-    Defaults are 0.5 km, 0.003 deg and 0.02 deg. They are tight because the
-    point of the key is that plane-mates are the *same orbit*: a loose tolerance
-    would merge distinct planes and silently change the table. The caller is
-    given the worst within-plane spread so the claim can be checked rather than
-    trusted.
+    There is no clustering and no tolerance here. Plane membership is a property
+    of the instance -- `build_instance.py` builds each Starlink plane by
+    sampling one propagated trajectory at evenly spaced times, so its members
+    are on the same orbit by construction, and every Planet Labs satellite is
+    its own plane because that fleet has no lattice. Membership arrives through
+    the ephemeris and is used as given.
 
-    Returns (plane index per node, representative a, inclination, RAAN, and the
-    worst spread found inside any plane).
+    Earlier versions rediscovered planes here by clustering (a, i) within a
+    tolerance. That was wrong twice over: it merged satellites that were not
+    plane-mates, and it made an exact structural property into a knob.
+
+    The representative is the member mean. Members agree on mean semi-major axis
+    to 0.4 m and on nodal rate to 2e-8 deg/day, so the only quantity where the
+    choice is visible is the osculating node, which carries a J2 short-period
+    offset of up to 0.14 deg across a plane; averaging centres that.
     """
-    n = a.shape[0]
-    pid = np.full(n, -1, dtype=np.int64)
-    reps = []
-    for k in range(n):
-        for g, (ra, ri, rw) in enumerate(reps):
-            if (abs(a[k] - ra) < da_tol and abs(incl[k] - ri) < di_tol
-                    and abs(_wrap_pi(raan0[k] - rw)) < draan_tol):
-                pid[k] = g
-                break
-        else:
-            pid[k] = len(reps)
-            reps.append((a[k], incl[k], raan0[k]))
-
-    n_p = len(reps)
+    n_p = int(pid.max()) + 1
     a_p = np.zeros(n_p)
     i_p = np.zeros(n_p)
     w_p = np.zeros(n_p)
@@ -114,7 +108,6 @@ def find_planes(a, incl, raan0, da_tol=0.5, di_tol=5e-5, draan_tol=3.5e-4):
         sel = pid == g
         a_p[g] = a[sel].mean()
         i_p[g] = incl[sel].mean()
-        # Mean of a circular quantity, so that a plane straddling 0 is handled.
         w_p[g] = math.atan2(np.sin(raan0[sel]).mean(), np.cos(raan0[sel]).mean())
         if sel.sum() > 1:
             spread["a"] = max(spread["a"], float(np.ptp(a[sel])))
@@ -123,7 +116,7 @@ def find_planes(a, incl, raan0, da_tol=0.5, di_tol=5e-5, draan_tol=3.5e-4):
             spread["raan"] = max(
                 spread["raan"],
                 math.degrees(np.abs(_wrap_pi(raan0[sel] - w_p[g])).max()))
-    return pid, a_p, i_p, w_p, spread
+    return a_p, i_p, w_p, spread
 
 
 def plane_members(pid, n_planes):
@@ -237,12 +230,6 @@ def main():
     p.add_argument("--horizon", type=float, default=HORIZON_DAYS)
     p.add_argument("--limit", type=int, default=0,
                    help="build only the first N nodes, for timing")
-    p.add_argument("--plane-da", type=float, default=0.5,
-                   help="semi-major-axis tolerance for plane identity [km]")
-    p.add_argument("--plane-di", type=float, default=0.003,
-                   help="inclination tolerance for plane identity [deg]")
-    p.add_argument("--plane-draan", type=float, default=0.02,
-                   help="RAAN tolerance for plane identity [deg]")
     p.add_argument("--n-scan", type=int, default=180)
     p.add_argument("--n-ladder", type=int, default=1200)
     p.add_argument("--max-growth", type=float, default=edelbaum.MAX_GROWTH)
@@ -260,9 +247,14 @@ def main():
     raan0, rate = nd.raan0[sl], nd.raan_rate[sl]
     u0, u_rate = nd.u0[sl], nd.u_rate[sl]
 
-    pid, a_p, i_p, w_p, spread = find_planes(
-        a, incl, raan0, args.plane_da, math.radians(args.plane_di),
-        math.radians(args.plane_draan))
+    pid = nd.plane[sl]
+    if (pid < 0).any():
+        raise SystemExit(
+            "the ephemeris carries no plane assignment. Rebuild the instance "
+            "and the ephemeris: planes are declared by build_instance.py, not "
+            "rediscovered here.")
+    pid = pid - pid.min()
+    a_p, i_p, w_p, spread = planes_from_instance(pid, a, incl, raan0)
     n_p = len(a_p)
     # Every member of a plane shares (a, i), so they share a nodal rate exactly;
     # take the representative's rather than averaging a derived quantity.

@@ -42,13 +42,13 @@ a0 = R_E + 550.0
 r, v = eci_from_oelem(a0, 0.0, math.radians(53.0), 0.0, 0.0, 0.0)
 r0 = np.array([r]); v0 = np.array([v])
 n_steps = int(5*86400/60)
-pos, vel, oe, times = propagate(r0, v0, 60.0, n_steps, 60, False)
+pos, vel, oe, times, _sec = propagate(r0, v0, 60.0, n_steps, 60, False)
 check("max |di|", float(np.abs(oe[0,:,1]-math.radians(53.0)).max()), 0.0, 1e-11, "rad")
 raan = np.unwrap(oe[0,:,2])
 check("max |dRAAN|", float(np.abs(raan-raan[0]).max()), 0.0, 1e-10, "rad")
 # RK4 is 4th order, so halving dt should cut the semi-major-axis drift by ~16.
 d60 = float(np.abs(oe[0,:,0]-a0).max())
-_,_,oe30,_ = propagate(r0, v0, 30.0, 2*n_steps, 120, False)
+_,_,oe30,_,_ = propagate(r0, v0, 30.0, 2*n_steps, 120, False)
 d30 = float(np.abs(oe30[0,:,0]-a0).max())
 print(f"    |da| at dt=60 s: {d60:.4e} km;  at dt=30 s: {d30:.4e} km;  ratio {d60/d30:.1f}")
 # The point is that the drift converges away with dt, so it is truncation and
@@ -66,7 +66,7 @@ for inc_deg, alt in ((53.0, 550.0), (97.6, 560.0), (70.0, 570.0)):
     inc = math.radians(inc_deg)
     r, v = eci_from_oelem(a0, 0.0, inc, 0.0, 0.0, 0.0)
     n_steps = int(20*86400/60)
-    pos, vel, oe, times = propagate(np.array([r]), np.array([v]), 60.0, n_steps, 60, True)
+    pos, vel, oe, times, _sec = propagate(np.array([r]), np.array([v]), 60.0, n_steps, 60, True)
     raan = np.unwrap(oe[0,:,2])
     rate = np.polyfit(times, raan, 1)[0]          # rad/s
     n = math.sqrt(MU/a0**3)
@@ -84,7 +84,7 @@ check("max |di| about its mean [deg]",
 print("\n6. orbital period from the argument of latitude, two-body")
 a0 = R_E + 550.0
 r, v = eci_from_oelem(a0, 0.0, math.radians(53.0), 0.0, 0.0, 0.0)
-pos, vel, oe, times = propagate(np.array([r]), np.array([v]), 10.0, int(3*86400/10), 6, False)
+pos, vel, oe, times, _sec = propagate(np.array([r]), np.array([v]), 10.0, int(3*86400/10), 6, False)
 u = np.unwrap(oe[0,:,4])
 period = 2*math.pi/(np.polyfit(times, u, 1)[0])
 check("period [s]", period, 2*math.pi*math.sqrt(a0**3/MU), 1e-4, "s")
