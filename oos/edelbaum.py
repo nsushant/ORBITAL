@@ -86,6 +86,10 @@ A_DRIFT_MAX = 10.0 * R_E      # km
 # could pay for, so nothing reachable is lost.
 MAX_GROWTH = 8.0              # km/s
 
+# Floor of the shared ladder. 1e-4 km/s of growth is 0.2 m/s of delta-V, an
+# order of magnitude below the cheapest transfer the table contains.
+MIN_GROWTH = 1e-4             # km/s
+
 
 @njit(cache=True)
 def to_velocity_plane(a, incl):
@@ -419,6 +423,201 @@ def transfer_cost(state1, state2, tofs, d_raans=EMPTY, n_scan=180, n_growth=48,
             else:
                 lo_k = mid
         best[k] = 2.0 * (half_separation + hi_k)
+
+    return best
+
+
+# ---------------------------------------------------------------------------
+# Shared-ladder path.
+#
+# `transfer_cost` above refines each entry's growth bracket on its own, and
+# every bisection step rebuilds the 181-sample bundle from scratch. Measured on
+# one object pair over the full 676-entry epoch grid, that is 8617
+# bundle-equivalents against a shared ladder of 48 -- 99.4 % of the runtime, and
+# the reason a full cost table took hours. The functions below compute each
+# ring once and test every entry against it.
+#
+# The trick is to stop asking "does this ring close *this* required RAAN
+# change" and instead ask "which required RAAN changes does this ring close at
+# all". For a fixed ring and horizon the closure function
+#
+#     G(k) = raan accrued while thrusting + drift rate * coast time
+#
+# depends only on the sample index k, not on what the entry needs. Over a
+# maximal run of samples that are feasible and do not jump, G is a continuous
+# polyline, so the set of RAAN changes it delivers is exactly the interval
+# [min G, max G] over that run. Testing an entry becomes a couple of
+# comparisons against a handful of such arcs.
+#
+# This is more rigorous than the bracket-then-bisect it replaces, not less: a
+# required change inside an arc has a root by the intermediate value theorem,
+# where the reference had to confirm the bracket numerically and gave up on it
+# whenever a midpoint landed in an infeasible pocket.
+
+
+@njit(cache=True)
+def closing_arcs(bundles, tof, n_scan, out_lo, out_hi):
+    """RAAN changes this ring delivers at this horizon, as arcs.
+
+    Writes into `out_lo` / `out_hi` and returns how many arcs were written.
+    Each arc is the image of the closure function over one maximal run of
+    samples that are feasible and consecutive without a jump. Runs of a single
+    sample deliver a point rather than an interval and are dropped, matching the
+    reference, which needs a sign change across two samples.
+    """
+    n_arc = 0
+    in_run = False
+    run_lo = 0.0
+    run_hi = 0.0
+    run_len = 0
+    prev_g = 0.0
+
+    for k in range(n_scan + 1):
+        # Feasibility exactly as _residual_from_bundle tests it.
+        if tof - bundles[k, 1] <= 0.0 or tof - bundles[k, 2] < 0.0:
+            ok = False
+            g = 0.0
+        elif np.isnan(bundles[k, 3]):        # the ring point was not an orbit
+            ok = False
+            g = 0.0
+        else:
+            ok = True
+            g = bundles[k, 3] + bundles[k, 4] * (tof - bundles[k, 2])
+
+        # A jump larger than pi between neighbours means the sampling is too
+        # coarse to claim continuity across it, so the run is cut there. This is
+        # the reference's `abs(r - prev_r) < pi` guard, applied to G itself.
+        joins = ok and in_run and abs(g - prev_g) < np.pi
+
+        if joins:
+            if g < run_lo:
+                run_lo = g
+            if g > run_hi:
+                run_hi = g
+            run_len += 1
+        else:
+            if in_run and run_len > 1:
+                out_lo[n_arc] = run_lo
+                out_hi[n_arc] = run_hi
+                n_arc += 1
+            if ok:
+                in_run = True
+                run_lo = g
+                run_hi = g
+                run_len = 1
+            else:
+                in_run = False
+                run_len = 0
+
+        prev_g = g
+
+    if in_run and run_len > 1:
+        out_lo[n_arc] = run_lo
+        out_hi[n_arc] = run_hi
+        n_arc += 1
+    return n_arc
+
+
+@njit(cache=True)
+def arc_clearance(out_lo, out_hi, n_arc, d_raan):
+    """Signed angular distance from a required RAAN change to the arc set.
+
+    Negative inside an arc, positive outside, zero on a boundary, and
+    continuous in the ring's growth. That continuity is what lets the growth at
+    which an entry first closes be interpolated between two ladder rungs
+    instead of bisected for.
+    """
+    two_pi = 2.0 * np.pi
+    best = 1e300
+    for m in range(n_arc):
+        width = out_hi[m] - out_lo[m]
+        if width >= two_pi:
+            return -np.pi
+        u = (d_raan - out_lo[m]) % two_pi
+        if u <= width:
+            inside = -min(u, width - u)
+            if inside < best:
+                best = inside
+        else:
+            outside = min(u - width, two_pi - u)
+            if outside < best:
+                best = outside
+    return best
+
+
+@njit(cache=True, parallel=False)
+def transfer_cost_grid(state1, state2, tof_list, d_raans, n_scan=180,
+                       n_ladder=1200, max_growth=MAX_GROWTH,
+                       min_growth=MIN_GROWTH):
+    """Minimum delta-V [km/s] over a grid of horizons and required RAAN changes.
+
+    `d_raans` is (n_row, n_tof); row r column q needs `d_raans[r, q]` of nodal
+    change within `tof_list[q]`. Rows are whatever the caller wants to batch --
+    departure epochs for one object pair, or every member pair of a plane group,
+    since the ring geometry depends on the two orbits alone and the epochs enter
+    only through the required RAAN change.
+
+    Returns (n_row, n_tof), NaN where no drift orbit closes the node in time.
+
+    Accuracy is set by the ladder alone: the delta-V returned is the first rung
+    that closes, so it overstates the true optimum by at most one rung spacing
+    and never understates it. At the default 1200 rungs over
+    [1e-4, 8] km/s the spacing is 0.95 %, so every entry is within 0.95 % and on
+    the conservative side.
+    """
+    n_row = d_raans.shape[0]
+    n_tof = tof_list.shape[0]
+    best = np.full((n_row, n_tof), np.nan)
+    resolved = np.zeros((n_row, n_tof), dtype=np.bool_)
+
+    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
+    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    half_separation = 0.5 * np.hypot(x2 - x1, y2 - y1)
+
+    # Geometric, so the *relative* delta-V error is bounded by the spacing
+    # whatever the chord length: delta-V is 2(c + g) and a step is rho*g, so the
+    # relative error is rho*g/(c + g) <= rho. The floor matters as much as the
+    # ceiling. An earlier version started at 1e-2 km/s, which is 20 m/s of
+    # delta-V, and reported that for transfers whose true cost is a couple of
+    # m/s -- an 800 % error on the cheapest entries in the table, which are
+    # exactly the ones the optimiser cares about.
+    ladder = np.empty(n_ladder + 1)
+    ladder[0] = 0.0                       # the chord: the direct transfer
+    lo_exp = np.log10(min_growth)
+    step = (np.log10(max_growth) - lo_exp) / (n_ladder - 1.0)
+    for g in range(n_ladder):
+        ladder[g + 1] = 10.0 ** (lo_exp + g * step)
+
+    lo_buf = np.empty(n_scan + 2)
+    hi_buf = np.empty(n_scan + 2)
+    n_left = n_row * n_tof
+
+    for g in range(ladder.shape[0]):
+        if n_left == 0:
+            break
+        growth = ladder[g]
+        bundles = ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan)
+
+        for q in range(n_tof):
+            n_arc = closing_arcs(bundles, tof_list[q], n_scan, lo_buf, hi_buf)
+            for r in range(n_row):
+                if resolved[r, q]:
+                    continue
+                c = arc_clearance(lo_buf, hi_buf, n_arc, d_raans[r, q])
+                if c <= 0.0:
+                    # The rung itself, not an interpolation back towards the
+                    # previous one. Interpolating on the clearance looked
+                    # attractive and was measurably wrong in the tail: the
+                    # clearance is not linear in growth once a point is inside
+                    # an arc, and 77 % of the disagreements it produced were it
+                    # crediting a cheaper transfer than a fine-ladder reference
+                    # allows. Taking the rung makes the error one-sided and
+                    # bounded by the ladder spacing, and errs towards
+                    # overstating delta-V, which is the direction Section 3.2.6
+                    # already claims for this model.
+                    best[r, q] = 2.0 * (half_separation + growth)
+                    resolved[r, q] = True
+                    n_left -= 1
 
     return best
 

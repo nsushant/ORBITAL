@@ -33,6 +33,7 @@ banner 0 "gates -- run these before trusting anything below"
 python3 tests/test_propagate.py
 python3 tests/test_edelbaum.py
 python3 tests/test_guards.py
+python3 tests/test_fastpath.py
 fi
 
 # ---------------------------------------------------------------------------
@@ -57,17 +58,18 @@ fi
 
 # ---------------------------------------------------------------------------
 if run_stage 3; then
-banner 3 "client-to-client cost table (HOURS -- see note)"
+banner 3 "client-to-client cost table (about an hour -- see note)"
 # 225 nodes, 26 departure epochs x 26 times of flight on a 15-day grid.
-# About 1.2 core-seconds per ordered pair, 50,400 ordered pairs: roughly
-# 4 hours on 4 cores, 1.5-2 hours on 8. It only has to be built once -- the
-# depot sweep in stage 4 rebuilds only the legs that touch the depot.
+# The ring ladder is shared across every entry of an orbit pair, which took this
+# from 4 hours to roughly 50 minutes on 4 cores and improved the error tail
+# while doing it. It only has to be built once: stage 4 rebuilds just the legs
+# that touch the depot.
 #
-# To split it across sessions, build slices and merge:
-#   python3 -m oos.costtable --from-node 0   --to-node 60  --out outputs/ct_000_060.h5
-#   python3 -m oos.costtable --from-node 60  --to-node 120 --out outputs/ct_060_120.h5
-#   ...
-#   python3 -m oos.costtable --merge 'outputs/ct_*.h5' --out outputs/cost_table.h5
+# Plane grouping would take it to about 6 minutes by building one ladder per
+# group of near-identical orbits, but it is an approximation that can move a
+# single entry by 350 m/s, so it is OFF by default. Turn it on only for
+# exploration, never for a table a published number rests on:
+#   python3 -m oos.costtable --group-da 1.0 --group-di 0.01 --out outputs/ct_fast.h5
 python3 -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5

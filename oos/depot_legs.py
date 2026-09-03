@@ -29,7 +29,7 @@ from numba import njit, prange
 from . import servicer
 from .constants import J2, MU, R_E
 from .costtable import SAME_PLANE_TOL, _wrap_pi
-from .edelbaum import MAX_GROWTH, transfer_cost
+from .edelbaum import MAX_GROWTH, MIN_GROWTH, transfer_cost_grid
 from .nodes import draconitic_rate
 from .phasing import phasing
 
@@ -47,11 +47,10 @@ def depot_secular(a, incl, raan0=0.0, u0=0.0):
 def _legs(a, incl, raan0, raan_rate, u0, u_rate,
           a_d, incl_d, raan0_d, raan_rate_d, u0_d, u_rate_d,
           dep_s, tof_s, mass, isp, thrust,
-          n_scan, n_growth, max_growth, growth_rtol):
+          n_scan, n_ladder, max_growth, min_growth):
     n = a.shape[0]
     n_dep = dep_s.shape[0]
     n_tof = tof_s.shape[0]
-    n_entry = n_dep * n_tof
 
     dv_out = np.full((2, n, n_dep, n_tof), np.nan, dtype=np.float32)
     ph_out = np.zeros((2, n, n_dep, n_tof), dtype=np.float32)
@@ -59,72 +58,61 @@ def _legs(a, incl, raan0, raan_rate, u0, u_rate,
     for j in prange(n):
         s_dep = np.empty(6)
         s_cli = np.empty(6)
-        for s in (s_dep, s_cli):
-            s[2] = 0.0
-            s[3] = mass
-            s[4] = isp
-            s[5] = thrust
-        s_dep[0] = a_d
-        s_dep[1] = incl_d
-        s_cli[0] = a[j]
-        s_cli[1] = incl[j]
+        s_dep[0] = a_d;    s_dep[1] = incl_d;  s_dep[2] = 0.0
+        s_cli[0] = a[j];   s_cli[1] = incl[j]; s_cli[2] = 0.0
+        for c in range(3, 6):
+            s_dep[c] = (mass, isp, thrust)[c - 3]
+            s_cli[c] = (mass, isp, thrust)[c - 3]
 
         coplanar = abs(incl_d - incl[j]) < SAME_PLANE_TOL
 
-        tofs = np.empty(n_entry)
-        dr_out = np.empty(n_entry)      # depot -> client
-        dr_ret = np.empty(n_entry)      # client -> depot
-        uf_out = np.empty(n_entry)
-        ut_out = np.empty(n_entry)
-        uf_ret = np.empty(n_entry)
-        ut_ret = np.empty(n_entry)
+        dr_out = np.empty((n_dep, n_tof))
+        dr_ret = np.empty((n_dep, n_tof))
+        for p in range(n_dep):
+            dep = dep_s[p]
+            for q in range(n_tof):
+                arr = dep + tof_s[q]
+                dr_out[p, q] = _wrap_pi((raan0[j] + raan_rate[j] * arr)
+                                        - (raan0_d + raan_rate_d * dep))
+                dr_ret[p, q] = _wrap_pi((raan0_d + raan_rate_d * arr)
+                                        - (raan0[j] + raan_rate[j] * dep))
+
+        dv_o = transfer_cost_grid(s_dep, s_cli, tof_s, dr_out,
+                                  n_scan, n_ladder, max_growth, min_growth)
+        dv_r = transfer_cost_grid(s_cli, s_dep, tof_s, dr_ret,
+                                  n_scan, n_ladder, max_growth, min_growth)
 
         for p in range(n_dep):
             dep = dep_s[p]
             for q in range(n_tof):
-                k = p * n_tof + q
-                tof = tof_s[q]
-                arr = dep + tof
-                tofs[k] = tof
-                dr_out[k] = _wrap_pi((raan0[j] + raan_rate[j] * arr)
-                                     - (raan0_d + raan_rate_d * dep))
-                dr_ret[k] = _wrap_pi((raan0_d + raan_rate_d * arr)
-                                     - (raan0[j] + raan_rate[j] * dep))
-                uf_out[k] = u0_d + u_rate_d * arr
-                ut_out[k] = u0[j] + u_rate[j] * arr
-                uf_ret[k] = u0[j] + u_rate[j] * arr
-                ut_ret[k] = u0_d + u_rate_d * arr
+                arr = dep + tof_s[q]
 
-        dv_o = transfer_cost(s_dep, s_cli, tofs, dr_out, n_scan, n_growth,
-                             max_growth, growth_rtol)
-        dv_r = transfer_cost(s_cli, s_dep, tofs, dr_ret, n_scan, n_growth,
-                             max_growth, growth_rtol)
+                # depot -> client: the servicer carries the depot's phase across
+                dvp, dur = phasing(a[j], u0_d + u_rate_d * arr,
+                                   u0[j] + u_rate[j] * arr)
+                if coplanar and abs(dr_out[p, q]) < SAME_PLANE_TOL:
+                    dv_out[0, j, p, q] = np.float32(dvp * 1000.0)
+                    ph_out[0, j, p, q] = np.float32(dur / DAY)
+                elif not np.isnan(dv_o[p, q]):
+                    dv_out[0, j, p, q] = np.float32((dv_o[p, q] + dvp) * 1000.0)
+                    ph_out[0, j, p, q] = np.float32(dur / DAY)
 
-        for k in range(n_entry):
-            p = k // n_tof
-            q = k - p * n_tof
-
-            dvp, dur = phasing(a[j], uf_out[k], ut_out[k])
-            if coplanar and abs(dr_out[k]) < SAME_PLANE_TOL:
-                dv_out[0, j, p, q] = np.float32(dvp * 1000.0)
-                ph_out[0, j, p, q] = np.float32(dur / DAY)
-            elif not np.isnan(dv_o[k]):
-                dv_out[0, j, p, q] = np.float32((dv_o[k] + dvp) * 1000.0)
-                ph_out[0, j, p, q] = np.float32(dur / DAY)
-
-            dvp, dur = phasing(a_d, uf_ret[k], ut_ret[k])
-            if coplanar and abs(dr_ret[k]) < SAME_PLANE_TOL:
-                dv_out[1, j, p, q] = np.float32(dvp * 1000.0)
-                ph_out[1, j, p, q] = np.float32(dur / DAY)
-            elif not np.isnan(dv_r[k]):
-                dv_out[1, j, p, q] = np.float32((dv_r[k] + dvp) * 1000.0)
-                ph_out[1, j, p, q] = np.float32(dur / DAY)
+                # client -> depot
+                dvp, dur = phasing(a_d, u0[j] + u_rate[j] * arr,
+                                   u0_d + u_rate_d * arr)
+                if coplanar and abs(dr_ret[p, q]) < SAME_PLANE_TOL:
+                    dv_out[1, j, p, q] = np.float32(dvp * 1000.0)
+                    ph_out[1, j, p, q] = np.float32(dur / DAY)
+                elif not np.isnan(dv_r[p, q]):
+                    dv_out[1, j, p, q] = np.float32((dv_r[p, q] + dvp) * 1000.0)
+                    ph_out[1, j, p, q] = np.float32(dur / DAY)
 
     return dv_out, ph_out
 
 
 def depot_legs(nodes, a_km, incl_rad, grid_days, raan0=0.0, u0=0.0,
-               n_scan=180, n_growth=48, max_growth=MAX_GROWTH, growth_rtol=1e-3):
+               n_scan=180, n_ladder=1200, max_growth=MAX_GROWTH,
+               min_growth=MIN_GROWTH):
     """Depot-to-client and client-to-depot legs for one trial depot location."""
     r0, rrate, uu0, urate = depot_secular(a_km, incl_rad, raan0, u0)
     grid_s = np.asarray(grid_days, dtype=float) * DAY
@@ -133,4 +121,4 @@ def depot_legs(nodes, a_km, incl_rad, grid_days, raan0=0.0, u0=0.0,
                  a_km, incl_rad, r0, rrate, uu0, urate,
                  grid_s, grid_s,
                  servicer.MASS, servicer.ISP, servicer.THRUST,
-                 n_scan, n_growth, max_growth, growth_rtol)
+                 n_scan, n_ladder, max_growth, min_growth)
