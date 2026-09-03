@@ -58,18 +58,17 @@ fi
 
 # ---------------------------------------------------------------------------
 if run_stage 3; then
-banner 3 "client-to-client cost table (about an hour -- see note)"
-# 225 nodes, 26 departure epochs x 26 times of flight on a 15-day grid.
-# The ring ladder is shared across every entry of an orbit pair, which took this
-# from 4 hours to roughly 50 minutes on 4 cores and improved the error tail
-# while doing it. It only has to be built once: stage 4 rebuilds just the legs
-# that touch the depot.
+banner 3 "client-to-client cost table"
+# Solved per constellation plane, then copied to every client with its own
+# phasing. Exact: plane-mates share a, inclination and RAAN, so they share their
+# node at every epoch and need an identical transfer.
 #
-# Plane grouping would take it to about 6 minutes by building one ladder per
-# group of near-identical orbits, but it is an approximation that can move a
-# single entry by 350 m/s, so it is OFF by default. Turn it on only for
-# exploration, never for a table a published number rests on:
-#   python3 -m oos.costtable --group-da 1.0 --group-di 0.01 --out outputs/ct_fast.h5
+# The speedup is set by how many sampled clients share a plane, and for this
+# instance that is almost none -- 214 planes from 225 nodes, so about 1.1x.
+# fetch_and_sample.jl takes at most 2 per plane and spreads across 5-degree RAAN
+# bins, so sampled satellites nearly always land in distinct planes. Expect
+# roughly 45 minutes. Sampling more clients per plane would cut this sharply and
+# is a modelling decision, not a tuning one.
 python3 -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5
