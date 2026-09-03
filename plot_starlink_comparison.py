@@ -20,7 +20,10 @@ from scipy.stats import gaussian_kde
 import moocore
 import os
 
-MDLS_FILE  = "/Users/sushantnigudkar/basic_project/outputs/mdls_pareto_comparative.csv"
+# Was an absolute path into a different, older basic_project in the home
+# directory -- not this repository. Made relative so it resolves here.
+MDLS_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "outputs", "mdls_pareto_comparative.csv")
 NSGA3_FILE = "outputs/nsga3_pareto_comparative.csv"
 MOEAD_FILE = "outputs/moead_pareto_comparative.csv"
 PSO_FILE   = "outputs/pso_pareto_comparative.csv"
