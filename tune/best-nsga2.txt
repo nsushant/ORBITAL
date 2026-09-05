@@ -1,0 +1,4 @@
+# Tuned NSGA-II parameters: irace elite 1 (configuration 101, parent 90).
+# 997 of 1000 experiments, 5 iterations, same instances and protocol as MDLS,
+# 19 min wall clock at parallel=6, 2026-09-05.
+--pop-size 151 --sbx-eta 48.6878 --sbx-prob 0.7413 --pm-eta 36.8926 --pm-prob 0.2551

@@ -1,11 +1,18 @@
 """
-run_ga_sensitivity.py — run NSGA-III or NSGA-III-T with a single OAT parameter override.
+run_ga_sensitivity.py — run NSGA-II or NSGA-II-T with a single OAT parameter override.
+
+D21 (PAPER_COMPLETION_PLAN.md): NSGA-III was replaced by NSGA-II. `n_ref_dirs`
+is kept as the CLI parameter name for compatibility with the existing OAT shell
+scripts, but it now sets `pop_size` directly rather than a das-dennis partition
+count -- NSGA-II has no reference directions to size. The values already swept
+by those scripts (vector counts such as 91, 210, ...) carry over unchanged as
+population sizes.
 
 CLI:
-  python3 run_ga_sensitivity.py <key> <trial> <algo> <param_name> <param_level> <h5_file>
+  python run_ga_sensitivity.py <key> <trial> <algo> <param_name> <param_level> <h5_file>
                                [--demand-dir DIR] [--dv-budget FLOAT] [--n-eval INT]
 
-algo       : nsga3rk | nsga3rk_ot
+algo       : nsga2rk | nsga2rk_ot
 param_name : sbx_eta | pm_eta | crossover_prob | shift | top_pct | n_ref_dirs
 param_level: float value
 
@@ -24,7 +31,7 @@ import h5py
 parser = argparse.ArgumentParser()
 parser.add_argument("key",         help="demand file key, e.g. tight_low_dv")
 parser.add_argument("trial",       type=int)
-parser.add_argument("algo",        choices=["nsga3rk", "nsga3rk_ot"])
+parser.add_argument("algo",        choices=["nsga2rk", "nsga2rk_ot"])
 parser.add_argument("param_name",  choices=["sbx_eta", "pm_eta", "crossover_prob", "shift", "top_pct", "n_ref_dirs"])
 parser.add_argument("param_level", type=float)
 parser.add_argument("h5_file",     help="path to shared HDF5 output file")
@@ -46,7 +53,7 @@ pm_eta         = 20
 crossover_prob = 0.9
 ot_shift       = 15.0
 ot_top_pct     = 0.5
-n_partitions   = 12
+pop_size       = 91   # nominal — matches NSGA-III's old das-dennis(n_dim=3, n_partitions=12)
 
 if args.param_name == "sbx_eta":
     sbx_eta = int(args.param_level)
@@ -59,7 +66,7 @@ elif args.param_name == "shift":
 elif args.param_name == "top_pct":
     ot_top_pct = args.param_level
 elif args.param_name == "n_ref_dirs":
-    n_partitions = int(args.param_level)
+    pop_size = int(args.param_level)
 
 # ---------------------------------------------------------------------------
 # Imports
@@ -69,10 +76,9 @@ from loaders import load_sim_name_map, load_demands, load_cost_table_jld2, load_
 from pymoo_stuff import OOSProblemRK, OOSProblemRK_OT
 from greedy_init import GreedySamplingRK, GreedySamplingRK2, load_greedy_RK_from_json
 
-from pymoo.algorithms.moo.nsga3 import NSGA3
+from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
-from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
 
@@ -111,7 +117,7 @@ greedy_x_rk = load_greedy_RK_from_json(greedy_path, Ndems) if os.path.exists(gre
 # Build problem and algorithm
 # ---------------------------------------------------------------------------
 
-ProbClass = OOSProblemRK_OT if args.algo == "nsga3rk_ot" else OOSProblemRK
+ProbClass = OOSProblemRK_OT if args.algo == "nsga2rk_ot" else OOSProblemRK
 
 prob = ProbClass(
     Ndems         = Ndems,
@@ -129,15 +135,13 @@ prob = ProbClass(
     dv_budget     = args.dv_budget,
 )
 
-ref_dirs = get_reference_directions("das-dennis", n_dim=3, n_partitions=n_partitions)
-if args.algo == "nsga3rk_ot":
+if args.algo == "nsga2rk_ot":
     sampling = GreedySamplingRK2(greedy_x_rk) if greedy_x_rk is not None else None
 else:
     sampling = GreedySamplingRK(greedy_x_rk) if greedy_x_rk is not None else None
 
-algo = NSGA3(
-    ref_dirs  = ref_dirs,
-    pop_size  = len(ref_dirs),
+algo = NSGA2(
+    pop_size  = pop_size,
     sampling  = sampling,
     crossover = SBX(eta=sbx_eta, prob=crossover_prob),
     mutation  = PM(eta=pm_eta),

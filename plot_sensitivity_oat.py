@@ -24,14 +24,14 @@ OUT_DIR  = "outputs"
 
 ALGOS = {
     "mdls":        "MDLS",
-    "nsga3rk":     "NSGA-III",
-    "nsga3rk_ot":  "NSGA-III-T",
+    "nsga2rk":     "NSGA-II",
+    "nsga2rk_ot":  "NSGA-II-T",
 }
 
 COLOURS = {
     "mdls":        "#1f77b4",
-    "nsga3rk":     "#d62728",
-    "nsga3rk_ot":  "#2ca02c",
+    "nsga2rk":     "#d62728",
+    "nsga2rk_ot":  "#2ca02c",
 }
 
 PARAMS = {
@@ -39,13 +39,13 @@ PARAMS = {
         ("shift",          "Timing shift (days)", [5.0, 15.0, 30.0, 60.0]),
         ("top_pct",        "Top-leg fraction",    [0.25, 0.5, 0.75, 1.0]),
     ],
-    "nsga3rk": [
+    "nsga2rk": [
         ("sbx_eta",        "SBX η",              [5.0, 10.0, 20.0, 30.0]),
         ("pm_eta",         "PM η",               [5.0, 10.0, 20.0, 30.0]),
         ("crossover_prob", "Crossover prob",      [0.5, 0.7, 0.9, 1.0]),
         ("n_ref_dirs",     "No. ref. directions", [4.0, 8.0, 12.0, 16.0]),
     ],
-    "nsga3rk_ot": [
+    "nsga2rk_ot": [
         ("sbx_eta",        "SBX η",              [5.0, 10.0, 20.0, 30.0]),
         ("pm_eta",         "PM η",               [5.0, 10.0, 20.0, 30.0]),
         ("crossover_prob", "Crossover prob",      [0.5, 0.7, 0.9, 1.0]),

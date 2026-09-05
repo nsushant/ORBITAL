@@ -6,8 +6,8 @@ hold the schedule alongside its objective vector, because the depot study needs
 to know *who* each front point serves, not merely what it costs.
 
 Dominance is minimisation on all three: delta-V, active vehicles, unrecovered
-value. A solution enters if nothing already held dominates it, and everything it
-dominates is evicted.
+value, compared to a relative tolerance (see EPS_REL). A solution enters if
+nothing already held dominates it, and everything it dominates is evicted.
 
 Feasibility. A solution that violates a constraint (D19) never enters. It is not
 ranked below feasible ones or penalised into an objective -- that is how the
@@ -28,16 +28,40 @@ import numpy as np
 from numba import njit
 
 
+# Objectives are compared to a relative tolerance rather than exactly.
+#
+# f3 is a sum of a few hundred client values totalling some $2.7e8. Two
+# schedules that recover exactly the same set can produce that total in a
+# different summation order and so differ in float64's last bit. Compared
+# exactly, that reads as a trade-off, and the archive keeps both: one run held
+# a point costing 100.6 m/s more than a starting schedule for a gain of
+# $3e-8 -- three hundredths of a microcent -- which is not a compromise
+# solution, it is arithmetic noise occupying a front slot (F34).
+#
+# 1e-9 sits far above float64's ~1e-16 and the ~1e-13 an order-dependent sum of
+# a few hundred terms accumulates, and far below anything meaningful: $0.27 on
+# f3, 5e-6 m/s on f1, and 2.5e-8 on a vehicle count that only moves in whole
+# numbers. Absolute zero is handled because the tolerance is taken against the
+# larger magnitude of the pair.
+EPS_REL = 1e-9
+
+
 @njit(cache=True, inline="always")
 def dominates(a, b):
-    """True when `a` is at least as good on every objective and better on one."""
+    """True when `a` is at least as good on every objective and better on one.
+
+    "Better" means better by more than EPS_REL of the values being compared;
+    a difference smaller than that is treated as equality.
+    """
     at_least_as_good = True
     strictly_better = False
     for k in range(a.shape[0]):
-        if a[k] > b[k]:
+        mag = abs(a[k]) if abs(a[k]) > abs(b[k]) else abs(b[k])
+        tol = EPS_REL * mag
+        if a[k] > b[k] + tol:
             at_least_as_good = False
             break
-        if a[k] < b[k]:
+        if a[k] < b[k] - tol:
             strictly_better = True
     return at_least_as_good and strictly_better
 
@@ -52,11 +76,15 @@ def _insert(front, n, candidate):
     for i in range(n):
         if dominates(front[i], candidate):
             return -1
-        # An exact duplicate adds nothing and would let the archive fill with
-        # copies of whatever the operators happen to rediscover.
+        # A duplicate adds nothing and would let the archive fill with copies
+        # of whatever the operators happen to rediscover. Judged to the same
+        # tolerance as dominance, so a point that merely re-derives an existing
+        # one through a different summation order is not admitted as new.
         same = True
         for k in range(candidate.shape[0]):
-            if front[i, k] != candidate[k]:
+            mag = (abs(front[i, k]) if abs(front[i, k]) > abs(candidate[k])
+                   else abs(candidate[k]))
+            if abs(front[i, k] - candidate[k]) > EPS_REL * mag:
                 same = False
                 break
         if same:
@@ -139,4 +167,9 @@ class Archive:
 
 
 def _dominates_py(a, b):
-    return bool(np.all(a <= b) and np.any(a < b))
+    """Python mirror of `dominates`. The two must agree exactly: `add` uses
+    this to evict from the Python-side lists and `_insert` to evict from the
+    objective array, and a disagreement desynchronises the front from its
+    schedules."""
+    tol = EPS_REL * np.maximum(np.abs(a), np.abs(b))
+    return bool(np.all(a <= b + tol) and np.any(a < b - tol))

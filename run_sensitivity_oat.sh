@@ -7,8 +7,8 @@
 # Usage:
 #   bash run_sensitivity_oat.sh              # all parameters
 #   bash run_sensitivity_oat.sh mdls         # MDLS params only
-#   bash run_sensitivity_oat.sh nsga3rk      # NSGA-III params only
-#   bash run_sensitivity_oat.sh nsga3rk_ot   # NSGA-III-T params only
+#   bash run_sensitivity_oat.sh nsga2rk      # NSGA-II params only
+#   bash run_sensitivity_oat.sh nsga2rk_ot   # NSGA-II-T params only
 
 set -euo pipefail
 
@@ -59,81 +59,81 @@ if should_run "mdls"; then
     done
 fi
 
-# ── NSGA-III ────────────────────────────────────────────────────────────────
+# ── NSGA-II ────────────────────────────────────────────────────────────────
 
-if should_run "nsga3rk"; then
-    echo "── NSGA-III: sweeping sbx_eta ──"
+if should_run "nsga2rk"; then
+    echo "── NSGA-II: sweeping sbx_eta ──"
     for level in 5.0 10.0 20.0 30.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk  sbx_eta=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk" "sbx_eta" "$level" "$H5_FILE" \
+            echo "  nsga2rk  sbx_eta=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk" "sbx_eta" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III: sweeping pm_eta ──"
+    echo "── NSGA-II: sweeping pm_eta ──"
     for level in 5.0 10.0 20.0 30.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk  pm_eta=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk" "pm_eta" "$level" "$H5_FILE" \
+            echo "  nsga2rk  pm_eta=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk" "pm_eta" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III: sweeping crossover_prob ──"
+    echo "── NSGA-II: sweeping crossover_prob ──"
     for level in 0.5 0.7 0.9 1.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk  crossover_prob=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk" "crossover_prob" "$level" "$H5_FILE" \
+            echo "  nsga2rk  crossover_prob=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk" "crossover_prob" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III: sweeping n_ref_dirs ──"
+    echo "── NSGA-II: sweeping n_ref_dirs ──"
     for level in 4 8 12 16; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk  n_ref_dirs=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk" "n_ref_dirs" "$level" "$H5_FILE" \
+            echo "  nsga2rk  n_ref_dirs=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk" "n_ref_dirs" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 fi
 
-# ── NSGA-III-T ──────────────────────────────────────────────────────────────
+# ── NSGA-II-T ──────────────────────────────────────────────────────────────
 
-if should_run "nsga3rk_ot"; then
-    echo "── NSGA-III-T: sweeping sbx_eta ──"
+if should_run "nsga2rk_ot"; then
+    echo "── NSGA-II-T: sweeping sbx_eta ──"
     for level in 5.0 10.0 20.0 30.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  sbx_eta=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "sbx_eta" "$level" "$H5_FILE" \
+            echo "  nsga2rk_ot  sbx_eta=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk_ot" "sbx_eta" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III-T: sweeping pm_eta ──"
+    echo "── NSGA-II-T: sweeping pm_eta ──"
     for level in 5.0 10.0 20.0 30.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  pm_eta=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "pm_eta" "$level" "$H5_FILE" \
+            echo "  nsga2rk_ot  pm_eta=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk_ot" "pm_eta" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III-T: sweeping crossover_prob ──"
+    echo "── NSGA-II-T: sweeping crossover_prob ──"
     for level in 0.5 0.7 0.9 1.0; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  crossover_prob=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "crossover_prob" "$level" "$H5_FILE" \
+            echo "  nsga2rk_ot  crossover_prob=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk_ot" "crossover_prob" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done
 
-    echo "── NSGA-III-T: sweeping n_ref_dirs ──"
+    echo "── NSGA-II-T: sweeping n_ref_dirs ──"
     for level in 4 8 12 16; do
         for trial in $(seq 1 $N_TRIALS); do
-            echo "  nsga3rk_ot  n_ref_dirs=$level  trial=$trial"
-            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga3rk_ot" "n_ref_dirs" "$level" "$H5_FILE" \
+            echo "  nsga2rk_ot  n_ref_dirs=$level  trial=$trial"
+            $PYTHON run_ga_sensitivity.py "$SCENARIO" "$trial" "nsga2rk_ot" "n_ref_dirs" "$level" "$H5_FILE" \
                 --demand-dir "$DEM_DIR" --dv-budget "$DV_BUDGET" --n-eval "$N_EVAL"
         done
     done

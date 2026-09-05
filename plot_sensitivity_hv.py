@@ -30,14 +30,14 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 ALGOS = {
     "mdls":       "MDLS",
-    "nsga3rk":    "NSGA-III",
-    "nsga3rk_ot": "NSGA-III-T",
+    "nsga2rk":    "NSGA-II",
+    "nsga2rk_ot": "NSGA-II-T",
 }
 
 COLOURS = {
     "mdls":       "#1f77b4",
-    "nsga3rk":    "#ff7f0e",
-    "nsga3rk_ot": "#d62728",
+    "nsga2rk":    "#ff7f0e",
+    "nsga2rk_ot": "#d62728",
 }
 
 FS      = 18

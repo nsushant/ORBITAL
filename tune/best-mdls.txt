@@ -1,0 +1,9 @@
+# Tuned MDLS parameters: irace elite 1 (configuration 60, parent 36).
+# 999 of 1000 experiments, 8 iterations, 30 tuning instances disjoint from the
+# Sec. 4 test set, 68 min wall clock at parallel=6, 2026-09-05.
+#
+# Note what is absent: --swap. All five elites carry swap = NA, so the tuner
+# was offered the cross-vehicle exchange operator and rejected it in every
+# surviving configuration -- an independent confirmation of F41, which found it
+# moved no front at two to three times the runtime.
+--shift 11.1321 --top-pct 0.5265 --remove-lo 0.0726 --remove-hi 0.5306 --add-lo 0.0661 --add-hi 0.6632

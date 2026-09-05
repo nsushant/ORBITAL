@@ -20,8 +20,14 @@ class OOSProblem(Problem):
 
     departure[i] = arrival[i] + service_times[i]  (no wait variable).
 
-    All solutions are made feasible by OOSRepair before evaluation,
-    so n_constr = 0.
+    n_constr = 0 -- not because a repair operator runs before evaluation
+    (no such class exists in this file or anywhere in the tree; that claim
+    was checked and withdrawn, see the F19 correction in
+    PAPER_COMPLETION_PLAN.md), but because the RK/RK_OT decoders below build
+    every schedule by construction: a leg is only ever flown if it exists in
+    the cost table and respects the window and budget, so there is nothing
+    for a constraint vector to report. An unassigned demand is not repaired
+    into feasibility, it is simply left unassigned and costs f3 (D19).
 
     # ── OLD 5N ENCODING (revert by restoring these bounds and updating
     #    repair/decode/operators to match) ────────────────────────────────────

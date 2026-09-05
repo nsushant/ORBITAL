@@ -1,0 +1,13 @@
+## NSGA-II parameter space for irace.
+##
+## The seeding is fixed at 18 greedy restarts, as for MDLS (D26), and is not a
+## tuned parameter. pop_size is tuned because it trades population diversity
+## against the number of generations the shared evaluation budget buys, which
+## is a genuine choice; the budget itself is fixed by the protocol.
+##
+## name        switch              type  range
+pop_size       "--pop-size "       i     (20, 300)
+sbx_eta        "--sbx-eta "        r     (1.0, 50.0)
+sbx_prob       "--sbx-prob "       r     (0.10, 1.00)
+pm_eta         "--pm-eta "         r     (1.0, 50.0)
+pm_prob        "--pm-prob "        r     (0.0, 0.5)

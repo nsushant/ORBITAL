@@ -46,6 +46,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import os
+
 import numpy as np
 from numba import njit
 
@@ -67,24 +69,103 @@ class CostTable:
     tof_days: np.ndarray
     plane_of_node: np.ndarray
     dv_budget: float          # m/s
+    reachable: np.ndarray = None   # (n, n) bool, or None; see `reach`
 
     @property
     def n_nodes(self):
         return self.dv.shape[0]
 
+    @property
+    def reach(self):
+        """(n, n) bool: is any leg i -> j priced at any epoch and duration.
 
-def load_cost_table(path="outputs/cost_table.h5"):
+        Read from a sidecar when one exists, computed and cached here
+        otherwise, so an operator can screen a proposed leg without touching
+        the table.
+        """
+        if self.reachable is None:
+            self.reachable = np.isfinite(self.dv).any(axis=(2, 3))
+        return self.reachable
+
+
+def _npy_sidecars(path):
+    """(dv, phasing, reachable) sidecar paths beside an HDF5 cost table."""
+    stem = path[:-3] if path.endswith(".h5") else path
+    return stem + ".dv.npy", stem + ".phasing.npy", stem + ".reach.npy"
+
+
+def export_npy(path="outputs/cost_table.h5"):
+    """Write the two large arrays beside the table as .npy, once.
+
+    The table is about 2.6 GB and every process that opens it reads the whole
+    thing into its own memory. That is tolerable for one run and expensive for
+    a tuning race, where each of a thousand experiments is a fresh process:
+    the read is paid a thousand times, and running four experiments at once
+    costs four copies, which is what caps the parallelism.
+
+    A .npy sidecar can be memory-mapped instead. Every process then shares one
+    copy through the operating system's page cache, the read disappears, and
+    the worker count stops being a memory question.
+    """
+    import h5py
+    dv_path, ph_path, rc_path = _npy_sidecars(path)
+    with h5py.File(path, "r") as f:
+        n = f["dv"].shape[0]
+        # Which ordered pairs have a priced transfer at all, at any epoch and
+        # any duration: a static property of the table, and the cheapest
+        # possible first question for an operator proposing a new leg. On the
+        # study instance it answers "no" for 86 % of the insertions 2-regret
+        # would otherwise have to price (F45). Seconds to build, one byte to
+        # ask.
+        reach = np.zeros((n, n), dtype=bool)
+        for i in range(0, n, 16):
+            reach[i:i + 16] = np.isfinite(f["dv"][i:i + 16]).any(axis=(2, 3))
+        np.save(rc_path, reach)
+        for name, out in (("dv", dv_path), ("phasing_days", ph_path)):
+            a = f[name]
+            m = np.lib.format.open_memmap(out, mode="w+", dtype=a.dtype,
+                                          shape=a.shape)
+            # copied in slabs so the export itself does not need 1.3 GB free
+            for i in range(0, a.shape[0], 16):
+                m[i:i + 16] = a[i:i + 16]
+            m.flush()
+            del m
+    return dv_path, ph_path, rc_path
+
+
+def load_cost_table(path="outputs/cost_table.h5", mmap=True):
+    """Load the table, memory-mapping the two large arrays when they exist.
+
+    `mmap=True` uses the .npy sidecars written by `export_npy` if both are
+    present and current, and falls back to reading the HDF5 file otherwise, so
+    this is a pure speed and memory change with no new required build step.
+    """
     import h5py
 
+    dv = phasing = reach = None
+    if mmap:
+        dv_path, ph_path, rc_path = _npy_sidecars(path)
+        if (os.path.exists(dv_path) and os.path.exists(ph_path)
+                and os.path.getmtime(dv_path) >= os.path.getmtime(path)
+                and os.path.getmtime(ph_path) >= os.path.getmtime(path)):
+            dv = np.load(dv_path, mmap_mode="r")
+            phasing = np.load(ph_path, mmap_mode="r")
+            if (os.path.exists(rc_path)
+                    and os.path.getmtime(rc_path) >= os.path.getmtime(path)):
+                reach = np.load(rc_path, mmap_mode="r")
+
     with h5py.File(path, "r") as f:
+        if dv is None:
+            dv, phasing = f["dv"][:], f["phasing_days"][:]
         return CostTable(
-            dv=f["dv"][:], phasing=f["phasing_days"][:],
+            dv=dv, phasing=phasing,
             names=[n.decode() if isinstance(n, bytes) else n
                    for n in f["names"][:]],
             dep_days=f["departure_days"][:], tof_days=f["tof_days"][:],
             plane_of_node=(f["plane_of_node"][:] if "plane_of_node" in f
-                           else np.full(f["dv"].shape[0], -1)),
-            dv_budget=float(f.attrs["dv_budget_m_s"]))
+                           else np.full(dv.shape[0], -1)),
+            dv_budget=float(f.attrs["dv_budget_m_s"]),
+            reachable=reach)
 
 
 @njit(cache=True, inline="always")
@@ -135,6 +216,19 @@ def leg(dv_tab, ph_tab, dep_grid, tof_grid, i, j, depart_day, tof_day):
     # The table's phasing time is spent *after* the transfer, so it is part of
     # the journey and the caller cannot start servicing before it elapses.
     arrival = dep_grid[p] + tof_grid[q] + ph_tab[i, j, p, q]
+    # A leg may not land before the vehicle set out. snap_departure clamps to
+    # the last departure epoch, so once a vehicle's clock runs past the end of
+    # the grid every lookup returns an arrival drawn from that final epoch --
+    # earlier, in wall-clock terms, than where the vehicle actually is. Left
+    # unguarded that reads as a perfectly ordinary cheap leg, and a schedule
+    # built from those travels backwards in time while evaluate() reports it
+    # feasible: the paper's chronological constraint (Sec. 2, a_i^v >= b_i-1^v)
+    # is the one constraint g1/g2/g3 do not express. Refusing the leg here
+    # enforces it by construction for every caller -- MDLS, the GA decoder and
+    # the constructive heuristic alike -- and reports it as what it physically
+    # is, an absent leg (g1), rather than as a fourth kind of violation.
+    if arrival < depart_day:
+        return 0.0, 0.0, False
     return dv, arrival, True
 
 

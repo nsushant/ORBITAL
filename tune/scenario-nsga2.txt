@@ -1,0 +1,24 @@
+## irace scenario: MDLS.
+##
+## The protocol is identical to scenario-nsga2.txt in every respect that is not
+## the algorithm -- same instances, same evaluation budget inside the runner,
+## same maxExperiments, same seed. TODO item 2 asks for the tuning to be
+## symmetric, and symmetry has to be in the scenario files or it is not real.
+##
+## Instances are the tuning set only. They share no demand realisation with the
+## Sec. 4 test set: generate_demands.py --trial-offset 100 draws from different
+## seeds, so a configuration cannot be tuned on the instances it is judged on.
+targetRunner     = "./tune/target-runner-nsga2"
+parameterFile    = "./tune/parameters-nsga2.txt"
+trainInstancesDir = "./outputs/tune_demands"
+execDir          = "./outputs/irace-nsga2"
+logFile          = "./outputs/irace-nsga2/irace.Rdata"
+maxExperiments   = 1000
+firstTest        = 5
+seed             = 1
+# Workers. Each used to cost 2.6 GB, because every process read the whole cost
+# table into its own memory; with the .npy sidecars they memory-map it and
+# share one copy through the page cache, so a worker costs about 0.09 GB and
+# the count is a core question rather than a memory one. Raise it to the
+# number of physical cores.
+parallel         = 6

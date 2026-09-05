@@ -69,8 +69,28 @@ from .nodes import load_nodes
 from .phasing import phasing
 
 DAY = 86400.0
-GRID_STEP_DAYS = 15.0
-HORIZON_DAYS = 400.0
+GRID_STEP_DAYS = 15.0        # fine step, both axes
+FINE_UNTIL_DAYS = 390.0      # where the fine step gives way to the coarse one
+COARSE_STEP_DAYS = 30.0
+DEP_HORIZON_DAYS = 1826.0    # departure epochs span five years (D25)
+TOF_HORIZON_DAYS = 730.0     # no single leg needs longer than two years
+
+
+def two_rate_grid(fine_step, fine_until, coarse_step, horizon):
+    """Fine spacing out to `fine_until`, coarse spacing beyond it.
+
+    The departure and time-of-flight axes are epoch grids, and neither
+    snap_departure nor snap_tof (oos/schedule.py) assumes uniform spacing --
+    both only need the grid sorted. That buys the resolution where it is worth
+    paying for: relative RAAN moves fastest in the first year, and a leg's
+    useful times of flight are short, so both axes keep 15-day steps early and
+    drop to 30-day steps once the geometry is changing slowly.
+    """
+    fine = np.arange(fine_step, fine_until + 1e-9, fine_step)
+    if horizon <= fine_until:
+        return fine[fine <= horizon + 1e-9]
+    coarse = np.arange(fine_until + coarse_step, horizon + 1e-9, coarse_step)
+    return np.concatenate([fine, coarse])
 
 SAME_PLANE_TOL = 0.01      # rad, on both inclination and node
 
@@ -226,8 +246,19 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--sim", default="outputs/simulation.h5")
     p.add_argument("--out", default="outputs/cost_table.h5")
-    p.add_argument("--step", type=float, default=GRID_STEP_DAYS)
-    p.add_argument("--horizon", type=float, default=HORIZON_DAYS)
+    p.add_argument("--step", type=float, default=GRID_STEP_DAYS,
+                   help="fine grid step [days], both axes")
+    p.add_argument("--fine-until", type=float, default=FINE_UNTIL_DAYS,
+                   help="fine step applies out to here, coarse step beyond")
+    p.add_argument("--coarse-step", type=float, default=COARSE_STEP_DAYS)
+    p.add_argument("--dep-horizon", type=float, default=DEP_HORIZON_DAYS,
+                   help="last departure epoch [days]. This is an absolute date, "
+                        "not a duration: a leg departing on day 1400 needs an "
+                        "entry at 1400, because the transfer cost is set by the "
+                        "relative RAAN of the two planes at that moment.")
+    p.add_argument("--tof-horizon", type=float, default=TOF_HORIZON_DAYS,
+                   help="longest single leg [days]. A mission spans years by "
+                        "chaining legs; this caps one hop, not the schedule.")
     p.add_argument("--limit", type=int, default=0,
                    help="build only the first N nodes, for timing")
     p.add_argument("--n-scan", type=int, default=180)
@@ -239,7 +270,10 @@ def main():
     import h5py
 
     nd = load_nodes(args.sim)
-    grid = np.arange(args.step, args.horizon + 1e-9, args.step)
+    dep_grid = two_rate_grid(args.step, args.fine_until, args.coarse_step,
+                             args.dep_horizon)
+    tof_grid = two_rate_grid(args.step, args.fine_until, args.coarse_step,
+                             args.tof_horizon)
     sl = slice(0, args.limit) if args.limit else slice(None)
     names = nd.names[sl]
     n = len(names)
@@ -260,7 +294,10 @@ def main():
     # take the representative's rather than averaging a derived quantity.
     rate_p = np.array([rate[np.flatnonzero(pid == g)[0]] for g in range(n_p)])
 
-    print(f"nodes {n}   grid {len(grid)} departures x {len(grid)} times of flight")
+    print(f"nodes {n}   grid {len(dep_grid)} departures "
+          f"({dep_grid[0]:.0f}-{dep_grid[-1]:.0f} d) x {len(tof_grid)} times of "
+          f"flight ({tof_grid[0]:.0f}-{tof_grid[-1]:.0f} d)   "
+          f"{len(dep_grid) * len(tof_grid):,} cells per pair")
     print(f"planes {n_p}  ->  {n_p * (n_p - 1):,} plane solves instead of "
           f"{n * (n - 1):,} client pairs ({n * (n - 1) / max(n_p * (n_p - 1), 1):.1f}x fewer)")
     sizes = np.bincount(pid)
@@ -272,7 +309,8 @@ def main():
           f"Isp {servicer.ISP:.0f} s")
 
     t0 = time.time()
-    plane_dv = build_plane_table(a_p, i_p, w_p, rate_p, grid * DAY, grid * DAY,
+    plane_dv = build_plane_table(a_p, i_p, w_p, rate_p, dep_grid * DAY,
+                                 tof_grid * DAY,
                                  servicer.MASS, servicer.ISP, servicer.THRUST,
                                  args.n_scan, args.n_ladder, args.max_growth,
                                  args.min_growth)
@@ -281,12 +319,12 @@ def main():
           f"({1e3 * t_plane / max(n_p * (n_p - 1), 1):.1f} ms per plane pair)")
 
     t0 = time.time()
-    dv, ph = expand_to_clients(plane_dv, pid, a, u0, u_rate, grid * DAY,
-                               grid * DAY, i_p, w_p, rate_p)
+    dv, ph = expand_to_clients(plane_dv, pid, a, u0, u_rate, dep_grid * DAY,
+                               tof_grid * DAY, i_p, w_p, rate_p)
     print(f"expanded to {n * (n - 1):,} client pairs in {time.time() - t0:.1f} s")
 
     finite = np.isfinite(dv)
-    n_off = n * (n - 1) * len(grid) ** 2
+    n_off = n * (n - 1) * len(dep_grid) * len(tof_grid)
     if finite.sum() == 0:
         raise SystemExit(
             "ABORT: not one entry is feasible. That is a numerical failure, not "
@@ -310,8 +348,8 @@ def main():
         f.create_dataset("phasing_days", data=ph, compression="lzf")
         f.create_dataset("names", data=np.array(names, dtype="S32"))
         f.create_dataset("plane_of_node", data=pid)
-        f.create_dataset("departure_days", data=grid)
-        f.create_dataset("tof_days", data=grid)
+        f.create_dataset("departure_days", data=dep_grid)
+        f.create_dataset("tof_days", data=tof_grid)
         f.attrs["units"] = "dv m/s, phasing_days days"
         f.attrs["servicer_mass_kg"] = servicer.MASS
         f.attrs["servicer_isp_s"] = servicer.ISP

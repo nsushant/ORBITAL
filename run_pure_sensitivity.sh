@@ -79,7 +79,7 @@ run_pair() {
     $PYTHON run_ga_trial.py "$key" "$trial" \
         --demand-dir "$DEM_DIR" --result-dir "$RES_DIR" \
         --dv-budget "$dv_budget" --n-eval "$N_EVAL" --h5-file "$H5_FILE" \
-        --algos nsga3rk nsga3rk_ot
+        --algos nsga2rk nsga2rk_ot
 }
 
 # SE1 — instance size

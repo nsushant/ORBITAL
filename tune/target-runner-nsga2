@@ -1,0 +1,10 @@
+#!/bin/bash
+# irace target runner for nsga2. The scenario files set the shared protocol here
+# rather than in the runner, so both algorithms provably get the same budget,
+# the same instances and the same evaluator.
+export OOS_ALGO=nsga2
+export OOS_N_EVAL=${OOS_N_EVAL:-10000}
+export OOS_COST_TABLE=${OOS_COST_TABLE:-outputs/cost_table.h5}
+export OOS_DEMAND_DIR=${OOS_DEMAND_DIR:-outputs/tune_demands}
+export OOS_REFERENCE=${OOS_REFERENCE:-outputs/tune_reference.json}
+exec python "$(dirname "$0")/target_runner.py" "$@"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# run_rkot_sensitivity.sh — re-run sensitivity analysis for NSGA-III-RK-OT only.
+# run_rkot_sensitivity.sh — re-run sensitivity analysis for NSGA-II-RK-OT only.
 #
-# Uses existing demand files and leaves MDLS / NSGA-III-RK results untouched.
-# Only nsga3rk_ot_*.csv files and HDF5 entries get overwritten.
+# Uses existing demand files and leaves MDLS / NSGA-II-RK results untouched.
+# Only nsga2rk_ot_*.csv files and HDF5 entries get overwritten.
 #
 # Usage:
 #   bash run_rkot_sensitivity.sh                        # all SEs, 5 trials
@@ -39,12 +39,12 @@ run_rkot() {
     $PYTHON run_ga_trial.py "$key" "$trial" \
         --demand-dir "$DEM_DIR" --result-dir "$RES_DIR" \
         --dv-budget "$dv_budget" --n-eval "$N_EVAL" --h5-file "$H5_FILE" \
-        --algos nsga3rk_ot
+        --algos nsga2rk_ot
 }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  Running NSGA-III-RK-OT sensitivity (only)              ║"
+echo "║  Running NSGA-II-RK-OT sensitivity (only)              ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
 # SE1 — instance size
@@ -99,5 +99,5 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  Done. Only nsga3rk_ot results updated.                 ║"
+echo "║  Done. Only nsga2rk_ot results updated.                 ║"
 echo "╚══════════════════════════════════════════════════════════╝"

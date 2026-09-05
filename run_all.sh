@@ -60,7 +60,7 @@ fi
 
 # ---------------------------------------------------------------------------
 if run_stage 3; then
-banner 3 "client-to-client cost table (about 18 minutes)"
+banner 3 "client-to-client cost table (about 70 minutes)"
 # Solved once per ordered pair of constellation planes, then copied to every
 # client in those planes with that client's own phasing. Exact, with no
 # tolerance: plane membership is declared by build_instance.py, not
@@ -70,6 +70,15 @@ banner 3 "client-to-client cost table (about 18 minutes)"
 # fewer transfer solves. The runtime is all Planet Labs, which has no plane
 # lattice (rideshare-deployed, spread over 352-604 km, RAAN-close objects 15-66
 # km apart in altitude) so each of its 124 satellites is its own plane.
+#
+# D25: the departure and time-of-flight axes are now separate grids. Departure
+# is an absolute epoch and runs five years, because a leg leaving on day 1400
+# needs the relative RAAN of its two planes on day 1400 -- and 45% of the
+# affordable pairs drift a median 57 deg over that span, so late epochs are
+# where their cheap windows are. Time of flight caps one hop at two years; a
+# mission reaches five years by chaining legs, not by flying one long one.
+# Both axes are 15-day out to 390 days and 30-day beyond (snap_departure and
+# snap_tof only need a sorted grid). 73 x 37 cells, about 2.6 GB.
 python -m oos.costtable \
     --sim outputs/simulation.h5 \
     --out outputs/cost_table.h5

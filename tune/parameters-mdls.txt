@@ -1,0 +1,20 @@
+## MDLS parameter space for irace.
+##
+## n_seed is deliberately absent. Both methods are initialised from the same 18
+## greedy restarts (D26); tuning that number separately for each would let the
+## tuner hand one of them a better starting set, and the Sec. 4 comparison would
+## then be measuring the starting set again.
+##
+## name        switch              type  range
+shift          "--shift "          r     (1.0, 60.0)
+top_pct        "--top-pct "        r     (0.05, 1.00)
+remove_lo      "--remove-lo "      r     (0.05, 0.60)
+remove_hi      "--remove-hi "      r     (0.30, 1.00)
+add_lo         "--add-lo "         r     (0.05, 0.60)
+add_hi         "--add-hi "         r     (0.30, 1.00)
+swap           ""                  c     ("", "--swap")
+swap_top_n     "--swap-top-n "     i     (5, 100)          | swap == "--swap"
+
+[forbidden]
+remove_hi < remove_lo
+add_hi < add_lo

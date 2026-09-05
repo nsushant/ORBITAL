@@ -63,6 +63,36 @@ k = D.knee(nadir=[1000., 10., 1e7])
 check("knee is the compromise, not an extreme",
       D.schedules[k] == "middle", f"got {D.schedules[k]}")
 
+print("\n6. a last-bit difference is not a trade-off")
+# The real case (F34): two schedules serving the same clients, whose $2.7e8
+# unrecovered totals were summed in a different order and so differ by 3e-8.
+# Compared exactly, the costlier one looks non-dominated and the archive kept
+# it, putting a point on the front that pays 100.6 m/s for three hundredths of
+# a microcent.
+seed  = np.array([4530.7409572601, 10.0, 267597178.0999996066])
+noise = np.array([4631.3662853241, 10.0, 267597178.0999995768])
+check("the cheaper schedule dominates the noise-separated one",
+      dominates(seed, noise), f"unrec differs by {noise[2]-seed[2]:.2e}")
+E = Archive()
+E.add(seed, "seed")
+check("the archive refuses it", not E.add(noise, "noise"))
+check("  front still holds one", len(E) == 1, f"{len(E)}")
+
+# and offered the other way round, the good one must still evict the bad
+E2 = Archive()
+E2.add(noise, "noise")
+check("offered in the other order the cheaper one evicts it", E2.add(seed, "seed"))
+check("  front holds only the cheaper", len(E2) == 1 and E2.schedules == ["seed"],
+      f"{len(E2)} {E2.schedules}")
+
+# the tolerance must not swallow differences that matter
+check("a 1 m/s improvement is still a real improvement",
+      dominates(np.array([4529.0, 10.0, 267597178.1]), seed))
+check("one vehicle fewer is still a real improvement",
+      dominates(np.array([4530.7409572601, 9.0, 267597178.0999996066]), seed))
+check("a dollar of recovered value is still a real improvement",
+      dominates(np.array([4530.7409572601, 10.0, 267597177.0999996066]), seed))
+
 print()
 if fails:
     print(f"{len(fails)} CHECK(S) FAILED: {fails}")
