@@ -65,7 +65,7 @@ SCEN = [("S1_repair", "S1 reactive repair"),
 ALGO = [("mdls", "MDLS", "#0072B2", "o"),
         ("nsga2", "NSGA-II", "#D55E00", "^")]
 
-INK, MUTED, GRID = "#1a1a1a", "#5c5c5c", "#d8d8d4"
+INK, MUTED = "#1a1a1a", "#5c5c5c"
 
 plt.rcParams.update({
     "font.size": 8, "axes.labelsize": 8, "axes.titlesize": 8,
@@ -81,8 +81,7 @@ def tidy(ax):
     """Recessive frame: the data carries the figure, not the furniture."""
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    ax.grid(axis="y", color=GRID, linewidth=0.5, zorder=0)
-    ax.set_axisbelow(True)
+    ax.grid(False)
 
 
 def paired_panel(ax, a, b, ylabel, lower_is_better):

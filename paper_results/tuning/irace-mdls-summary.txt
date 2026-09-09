@@ -1,0 +1,19 @@
+algorithm: mdls
+configurations tried: 118
+iterations: 7
+experiments: 
+final elites: 5
+
+final elite configurations:
+    .ID.   shift top_pct remove_lo remove_hi add_lo add_hi swap swap_top_n
+36    36 28.2615  0.6084    0.0804    0.6895 0.1388 0.5152              NA
+60    60 11.1321  0.5265    0.0726    0.5306 0.0661 0.6632              NA
+84    84 10.6258  0.7899    0.0540    0.6442 0.4066 0.8570              NA
+106  106 20.4861  0.6925    0.1108    0.6291 0.1434 0.5435              NA
+107  107 12.1448  0.8883    0.0637    0.5694 0.3522 0.9381              NA
+    .PARENT. elite_iteration final_elite
+36        18               7        TRUE
+60        36               7        TRUE
+84        63               7        TRUE
+106       36               7        TRUE
+107       84               7        TRUE

@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the software release and the accompanying paper."
+title: "Multi-objective mission planning for depot-supported on-orbit servicing"
+type: software
+version: 1.0.0
+date-released: 2026-09-09
+authors:
+  - given-names: Sushanta
+    family-names: Nigudkar
+    affiliation: University of Antwerp
+    orcid: "https://orcid.org/0009-0004-4862-5795"
+  - given-names: Christof
+    family-names: Defryn
+    affiliation: University of Antwerp
+    orcid: "https://orcid.org/0000-0002-5803-5412"
+keywords:
+  - on-orbit servicing
+  - multi-objective optimisation
+  - vehicle routing
+  - orbital depot placement
+  - multi-directional local search
+license: MIT

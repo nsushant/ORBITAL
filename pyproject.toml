@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "depot-oos-planning"
+version = "1.0.0"
+description = "Research code for multi-objective depot-supported on-orbit servicing mission planning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Sushanta Nigudkar", email = "sushanta.nigudkar@uantwerpen.be"},
+  {name = "Christof Defryn", email = "christof.defryn@uantwerpen.be"},
+]
+dependencies = [
+  "h5py==3.15.1",
+  "matplotlib==3.10.6",
+  "numba==0.65.1",
+  "numpy==2.2.6",
+  "pandas==2.2.3",
+  "pymoo==0.6.1.6",
+  "scipy==1.15.2",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==8.4.2",
+]
+
+[tool.setuptools]
+packages = ["oos"]

@@ -110,15 +110,28 @@ def _legs(a, incl, raan0, raan_rate, u0, u_rate,
     return dv_out, ph_out
 
 
-def depot_legs(nodes, a_km, incl_rad, grid_days, raan0=0.0, u0=0.0,
+def depot_legs(nodes, a_km, incl_rad, grid_days, dep_days=None,
+               tof_days=None, raan0=0.0, u0=0.0,
                n_scan=180, n_ladder=1200, max_growth=MAX_GROWTH,
                min_growth=MIN_GROWTH):
-    """Depot-to-client and client-to-depot legs for one trial depot location."""
+    """Depot-to-client and client-to-depot legs for one trial depot location.
+
+    `dep_days` and `tof_days` let the rebuilt legs share the base cost table's
+    departure / time-of-flight grid exactly, which they must if the patched
+    table is to look like one instance to `oos.schedule`: the base table's two
+    axes can differ (73 departures vs 37 times of flight on the study instance).
+    When either is None it falls back to `grid_days`, the old behaviour.
+    """
     r0, rrate, uu0, urate = depot_secular(a_km, incl_rad, raan0, u0)
-    grid_s = np.asarray(grid_days, dtype=float) * DAY
+    if dep_days is None:
+        dep_days = grid_days
+    if tof_days is None:
+        tof_days = grid_days
+    dep_s = np.asarray(dep_days, dtype=float) * DAY
+    tof_s = np.asarray(tof_days, dtype=float) * DAY
     return _legs(nodes.a, nodes.incl, nodes.raan0, nodes.raan_rate,
                  nodes.u0, nodes.u_rate,
                  a_km, incl_rad, r0, rrate, uu0, urate,
-                 grid_s, grid_s,
+                 dep_s, tof_s,
                  servicer.MASS, servicer.ISP, servicer.THRUST,
                  n_scan, n_ladder, max_growth, min_growth)

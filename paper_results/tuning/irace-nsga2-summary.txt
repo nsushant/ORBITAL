@@ -1,0 +1,15 @@
+algorithm: nsga2
+configurations tried: 124
+iterations: 5
+experiments: 
+final elites: 3
+
+final elite configurations:
+    .ID. pop_size sbx_eta sbx_prob  pm_eta pm_prob .PARENT. elite_iteration
+45    45       48 36.6531   0.7048 49.4976  0.2815        1               5
+101  101      151 48.6878   0.7413 36.8926  0.2551       90               5
+121  121      171 43.7147   0.7750 37.8774  0.2431       90               5
+    final_elite
+45         TRUE
+101        TRUE
+121        TRUE
