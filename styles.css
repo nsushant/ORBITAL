@@ -111,8 +111,9 @@ footer {
 }
 
 .intro {
+  --hero-breathing-room: clamp(76px, 10vw, 136px);
   max-width: 1020px;
-  padding: clamp(76px, 10vw, 136px) 0 clamp(72px, 9vw, 112px);
+  padding: var(--hero-breathing-room) 0 clamp(72px, 9vw, 112px);
   text-align: center;
 }
 
@@ -145,7 +146,7 @@ h1 {
 }
 
 .mission-line {
-  margin: 0 auto clamp(48px, 6vw, 72px);
+  margin: 0 auto var(--hero-breathing-room);
   color: var(--accent-bright);
   font-family: var(--serif);
   font-size: clamp(1.2rem, 2.5vw, 1.75rem);
