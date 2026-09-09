@@ -8,6 +8,7 @@
   <title>Sushanta Nigudkar | Research projects</title>
   <link rel="stylesheet" href="styles.css">
   <script src="orbits.js" defer></script>
+  <script src="depot-explorer.js" defer></script>
 </head>
 <body>
   <canvas id="orbital-field" aria-hidden="true"></canvas>
@@ -89,6 +90,82 @@
           </div>
         </div>
       </article>
+    </section>
+
+    <section class="explorer" aria-labelledby="explorer-title">
+      <div class="section-heading">
+        <h2 id="explorer-title">Depot architecture explorer</h2>
+        <span>Live data</span>
+      </div>
+
+      <div class="explorer-intro">
+        <div>
+          <p class="project-topic">Interactive MILP results</p>
+          <h3>Explore the minimum-depot architectures.</h3>
+        </div>
+        <p>
+          Switch between servicing scenarios to inspect the proven-optimal
+          locations selected by the two-stage depot-location model. These are
+          precomputed study results, not a new optimisation run.
+        </p>
+      </div>
+
+      <div class="scenario-switcher" role="group" aria-label="Demand scenario">
+        <button class="scenario-button is-active" type="button" data-scenario="repair" aria-pressed="true">
+          <span>S1</span> Reactive repair
+        </button>
+        <button class="scenario-button" type="button" data-scenario="refuel" aria-pressed="false">
+          <span>S2</span> Planned refuelling
+        </button>
+        <button class="scenario-button" type="button" data-scenario="deorbit" aria-pressed="false">
+          <span>S3</span> End-of-life deorbit
+        </button>
+      </div>
+
+      <div class="result-summary" aria-live="polite">
+        <div><span>Minimum depots</span><strong id="summary-depots">4</strong></div>
+        <div><span>Total servicers</span><strong id="summary-fleet">66</strong></div>
+        <div><span>Deployment cost</span><strong id="summary-cost">$1.31B</strong></div>
+        <div><span>Recovered value</span><strong id="summary-value">$204.4M</strong></div>
+      </div>
+
+      <div class="explorer-grid">
+        <figure class="depot-map">
+          <figcaption>
+            Candidate orbital-depot design space
+            <span>Selected locations are numbered</span>
+          </figcaption>
+          <svg id="depot-map" viewBox="0 0 720 430" role="img" aria-labelledby="map-title map-description">
+            <title id="map-title">Selected orbital depot locations</title>
+            <desc id="map-description">Candidate depot altitudes and inclinations, with selected locations highlighted for the active scenario.</desc>
+          </svg>
+        </figure>
+
+        <div class="result-detail">
+          <div class="model-conditions">
+            <span>Budget <strong>$2.0B</strong></span>
+            <span>Loss cap <strong>40% per portfolio</strong></span>
+            <span>Per-depot ΔV cap <strong>12,000 m/s</strong></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Depot</th>
+                  <th scope="col">Orbit</th>
+                  <th scope="col">Fleet</th>
+                  <th scope="col">ΔV</th>
+                  <th scope="col">Cost</th>
+                </tr>
+              </thead>
+              <tbody id="depot-table"></tbody>
+            </table>
+          </div>
+          <p class="solver-note" id="solver-note">
+            Both lexicographic stages solved to proven optimality with HiGHS.
+          </p>
+        </div>
+      </div>
     </section>
   </main>
 
