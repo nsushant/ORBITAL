@@ -19,8 +19,8 @@
     })),
   );
   const shuttleMissions = [
-    { targetOrbit: 0, targetPhase: (2 / 9) * Math.PI * 2, cycleOffset: 0.08, duration: 13 },
-    { targetOrbit: 2, targetPhase: (7 / 13) * Math.PI * 2 + 0.62, cycleOffset: 0.57, duration: 17 },
+    { targetOrbit: 0, targetPhase: (2 / 9) * Math.PI * 2, cycleOffset: 0.08, duration: 24 },
+    { targetOrbit: 2, targetPhase: (7 / 13) * Math.PI * 2 + 0.62, cycleOffset: 0.57, duration: 30 },
   ];
 
   function resize() {
@@ -162,12 +162,18 @@
     context.restore();
   }
 
-  function quadraticPoint(start, control, end, progress) {
-    const remaining = 1 - progress;
-    return {
-      x: remaining * remaining * start.x + 2 * remaining * progress * control.x + progress * progress * end.x,
-      y: remaining * remaining * start.y + 2 * remaining * progress * control.y + progress * progress * end.y,
-    };
+  function shortestAngleDifference(start, end) {
+    const fullTurn = Math.PI * 2;
+    return ((((end - start + Math.PI) % fullTurn) + fullTurn) % fullTurn) - Math.PI;
+  }
+
+  function spiralPoint(startRing, endRing, startAngle, endAngle, progress, layout, turns = 2) {
+    const direction = endRing[0] >= startRing[0] ? 1 : -1;
+    const angularTravel = shortestAngleDifference(startAngle, endAngle) + direction * turns * Math.PI * 2;
+    const angle = startAngle + angularTravel * progress;
+    const radiusX = startRing[0] + (endRing[0] - startRing[0]) * progress;
+    const radiusY = startRing[1] + (endRing[1] - startRing[1]) * progress;
+    return pointOnOrbit([radiusX, radiusY], angle, layout);
   }
 
   function drawShuttle(point, heading, opacity) {
@@ -210,11 +216,12 @@
     context.restore();
   }
 
-  function drawShuttleMissions(time, layout, depot) {
+  function drawShuttleMissions(time, layout, depot, depotAngle) {
     shuttleMissions.forEach((mission) => {
+      const targetAngle = time * shellSpeeds[mission.targetOrbit] + mission.targetPhase;
       const target = pointOnOrbit(
         layout.rings[mission.targetOrbit],
-        time * shellSpeeds[mission.targetOrbit] + mission.targetPhase,
+        targetAngle,
         layout,
       );
       const rawCycle = ((time / mission.duration + mission.cycleOffset) % 1 + 1) % 1;
@@ -230,32 +237,49 @@
           ? (rawCycle - rendezvousEnd) / (returnEnd - rendezvousEnd)
           : 0;
       const eased = legProgress * legProgress * (3 - 2 * legProgress);
-      const start = outbound ? depot : target;
-      const end = outbound ? target : depot;
-      const middleX = (start.x + end.x) / 2;
-      const middleY = (start.y + end.y) / 2;
-      const awayX = middleX - layout.centreX;
-      const awayY = middleY - layout.centreY;
-      const magnitude = Math.hypot(awayX, awayY) || 1;
-      const control = {
-        x: middleX + (awayX / magnitude) * 42,
-        y: middleY + (awayY / magnitude) * 42,
-      };
-
       if (outbound || returning) {
+        const startRing = outbound ? layout.rings[1] : layout.rings[mission.targetOrbit];
+        const endRing = outbound ? layout.rings[mission.targetOrbit] : layout.rings[1];
+        const startAngle = outbound ? depotAngle : targetAngle;
+        const endAngle = outbound ? targetAngle : depotAngle;
         context.save();
         context.beginPath();
-        context.moveTo(start.x, start.y);
-        context.quadraticCurveTo(control.x, control.y, end.x, end.y);
+        for (let step = 0; step <= 64; step += 1) {
+          const pathProgress = step / 64;
+          const pathPoint = spiralPoint(
+            startRing,
+            endRing,
+            startAngle,
+            endAngle,
+            pathProgress,
+            layout,
+          );
+          if (step === 0) context.moveTo(pathPoint.x, pathPoint.y);
+          else context.lineTo(pathPoint.x, pathPoint.y);
+        }
         context.strokeStyle = "rgba(143, 218, 255, 0.13)";
         context.setLineDash([3, 7]);
         context.stroke();
         context.restore();
 
-        const shuttle = quadraticPoint(start, control, end, eased);
-        const tangentX = 2 * (1 - eased) * (control.x - start.x) + 2 * eased * (end.x - control.x);
-        const tangentY = 2 * (1 - eased) * (control.y - start.y) + 2 * eased * (end.y - control.y);
-        const heading = Math.atan2(tangentY, tangentX);
+        const shuttle = spiralPoint(startRing, endRing, startAngle, endAngle, eased, layout);
+        const behind = spiralPoint(
+          startRing,
+          endRing,
+          startAngle,
+          endAngle,
+          Math.max(eased - 0.002, 0),
+          layout,
+        );
+        const ahead = spiralPoint(
+          startRing,
+          endRing,
+          startAngle,
+          endAngle,
+          Math.min(eased + 0.002, 1),
+          layout,
+        );
+        const heading = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
         const endpointFade = Math.min(1, Math.sin(Math.PI * legProgress) * 2.8 + 0.2);
         drawShuttle(shuttle, heading, endpointFade);
       } else if (rendezvous) {
@@ -316,8 +340,9 @@
       drawSatellite(point, satellite.scale, false);
     });
 
-    const depot = pointOnOrbit(layout.rings[1], time * shellSpeeds[1] + 5.05, layout);
-    drawShuttleMissions(time, layout, depot);
+    const depotAngle = time * shellSpeeds[1] + 5.05;
+    const depot = pointOnOrbit(layout.rings[1], depotAngle, layout);
+    drawShuttleMissions(time, layout, depot, depotAngle);
     drawDepot(depot);
 
     drawRendezvous(time, layout);
