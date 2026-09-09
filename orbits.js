@@ -18,6 +18,10 @@
       scale: 0.46 + ((index + orbit) % 3) * 0.07,
     })),
   );
+  const shuttleMissions = [
+    { targetOrbit: 0, targetPhase: 1.2, cycleOffset: 0.08, duration: 13 },
+    { targetOrbit: 2, targetPhase: 3.8, cycleOffset: 0.57, duration: 17 },
+  ];
 
   function resize() {
     width = window.innerWidth;
@@ -158,6 +162,80 @@
     context.restore();
   }
 
+  function quadraticPoint(start, control, end, progress) {
+    const remaining = 1 - progress;
+    return {
+      x: remaining * remaining * start.x + 2 * remaining * progress * control.x + progress * progress * end.x,
+      y: remaining * remaining * start.y + 2 * remaining * progress * control.y + progress * progress * end.y,
+    };
+  }
+
+  function drawShuttle(point, heading, opacity) {
+    const scale = width < 720 ? 0.62 : 0.78;
+    context.save();
+    context.translate(point.x, point.y);
+    context.rotate(heading);
+    context.globalAlpha = opacity;
+    context.fillStyle = "rgba(211, 244, 255, 0.96)";
+    context.strokeStyle = "rgba(96, 195, 246, 0.9)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(10 * scale, 0);
+    context.lineTo(-6 * scale, -5 * scale);
+    context.lineTo(-3 * scale, 0);
+    context.lineTo(-6 * scale, 5 * scale);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(-7 * scale, 0);
+    context.lineTo(-15 * scale, 0);
+    context.strokeStyle = "rgba(125, 211, 255, 0.48)";
+    context.stroke();
+    context.restore();
+  }
+
+  function drawShuttleMissions(time, layout, depot) {
+    shuttleMissions.forEach((mission) => {
+      const target = pointOnOrbit(
+        layout.rings[mission.targetOrbit],
+        time * shellSpeeds[mission.targetOrbit] + mission.targetPhase,
+        layout,
+      );
+      const rawCycle = ((time / mission.duration + mission.cycleOffset) % 1 + 1) % 1;
+      const outbound = rawCycle < 0.5;
+      const legProgress = outbound ? rawCycle * 2 : (rawCycle - 0.5) * 2;
+      const eased = legProgress * legProgress * (3 - 2 * legProgress);
+      const start = outbound ? depot : target;
+      const end = outbound ? target : depot;
+      const middleX = (start.x + end.x) / 2;
+      const middleY = (start.y + end.y) / 2;
+      const awayX = middleX - layout.centreX;
+      const awayY = middleY - layout.centreY;
+      const magnitude = Math.hypot(awayX, awayY) || 1;
+      const control = {
+        x: middleX + (awayX / magnitude) * 42,
+        y: middleY + (awayY / magnitude) * 42,
+      };
+
+      context.save();
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      context.quadraticCurveTo(control.x, control.y, end.x, end.y);
+      context.strokeStyle = "rgba(143, 218, 255, 0.13)";
+      context.setLineDash([3, 7]);
+      context.stroke();
+      context.restore();
+
+      const shuttle = quadraticPoint(start, control, end, eased);
+      const tangentX = 2 * (1 - eased) * (control.x - start.x) + 2 * eased * (end.x - control.x);
+      const tangentY = 2 * (1 - eased) * (control.y - start.y) + 2 * eased * (end.y - control.y);
+      const heading = Math.atan2(tangentY, tangentX);
+      const endpointFade = Math.min(1, Math.sin(Math.PI * legProgress) * 2.8 + 0.2);
+      drawShuttle(shuttle, heading, endpointFade);
+    });
+  }
+
   function drawRendezvous(time, layout) {
     const ring = layout.rings[0];
     const clientAngle = time * shellSpeeds[0] + 0.15;
@@ -205,6 +283,7 @@
     });
 
     const depot = pointOnOrbit(layout.rings[1], time * shellSpeeds[1] + 5.05, layout);
+    drawShuttleMissions(time, layout, depot);
     drawDepot(depot);
 
     drawRendezvous(time, layout);
