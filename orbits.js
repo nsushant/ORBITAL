@@ -8,11 +8,16 @@
   let pixelRatio = 1;
   let animationFrame = 0;
 
-  const satellites = [
-    { orbit: 0, phase: 0.15, speed: 0.075, scale: 1 },
-    { orbit: 1, phase: 2.35, speed: -0.048, scale: 0.84 },
-    { orbit: 2, phase: 4.4, speed: 0.034, scale: 0.76 },
-  ];
+  const shellSpeeds = [0.075, -0.048, 0.034];
+  const shellPopulations = [9, 11, 13];
+  const constellation = shellPopulations.flatMap((population, orbit) =>
+    Array.from({ length: population }, (_, index) => ({
+      orbit,
+      phase: (index / population) * Math.PI * 2 + orbit * 0.31,
+      speed: shellSpeeds[orbit],
+      scale: 0.46 + ((index + orbit) % 3) * 0.07,
+    })),
+  );
 
   function resize() {
     width = window.innerWidth;
@@ -61,6 +66,47 @@
     context.restore();
   }
 
+  function drawEarth(layout) {
+    const radius = width < 720 ? 30 : 44;
+    const gradient = context.createRadialGradient(
+      layout.centreX - radius * 0.35,
+      layout.centreY - radius * 0.35,
+      radius * 0.1,
+      layout.centreX,
+      layout.centreY,
+      radius,
+    );
+    gradient.addColorStop(0, "rgba(45, 151, 218, 0.64)");
+    gradient.addColorStop(1, "rgba(3, 37, 79, 0.88)");
+
+    context.save();
+    context.translate(layout.centreX, layout.centreY);
+    context.beginPath();
+    context.arc(0, 0, radius, 0, Math.PI * 2);
+    context.fillStyle = gradient;
+    context.fill();
+    context.strokeStyle = "rgba(175, 229, 255, 0.7)";
+    context.lineWidth = 1.2;
+    context.stroke();
+
+    context.strokeStyle = "rgba(153, 218, 255, 0.26)";
+    context.lineWidth = 0.8;
+    [-0.45, 0.45].forEach((offset) => {
+      context.beginPath();
+      context.ellipse(0, 0, radius * Math.cos(offset), radius, 0, 0, Math.PI * 2);
+      context.stroke();
+    });
+    context.beginPath();
+    context.ellipse(0, 0, radius, radius * 0.34, 0, 0, Math.PI * 2);
+    context.stroke();
+
+    context.beginPath();
+    context.arc(0, 0, radius + 5, 0, Math.PI * 2);
+    context.strokeStyle = "rgba(119, 205, 255, 0.16)";
+    context.stroke();
+    context.restore();
+  }
+
   function drawSatellite(point, scale = 1, active = false) {
     context.save();
     context.translate(point.x, point.y);
@@ -79,9 +125,42 @@
     context.restore();
   }
 
+  function drawDepot(point) {
+    const scale = width < 720 ? 0.72 : 0.9;
+    context.save();
+    context.translate(point.x, point.y);
+    context.rotate(-0.18);
+    context.lineWidth = 1;
+    context.strokeStyle = "rgba(226, 247, 255, 0.92)";
+    context.fillStyle = "rgba(25, 117, 178, 0.92)";
+
+    context.fillRect(-10 * scale, -7 * scale, 20 * scale, 14 * scale);
+    context.strokeRect(-10 * scale, -7 * scale, 20 * scale, 14 * scale);
+    context.fillRect(-35 * scale, -5 * scale, 19 * scale, 10 * scale);
+    context.strokeRect(-35 * scale, -5 * scale, 19 * scale, 10 * scale);
+    context.fillRect(16 * scale, -5 * scale, 19 * scale, 10 * scale);
+    context.strokeRect(16 * scale, -5 * scale, 19 * scale, 10 * scale);
+    context.beginPath();
+    context.moveTo(0, -7 * scale);
+    context.lineTo(0, -18 * scale);
+    context.moveTo(-5 * scale, -14 * scale);
+    context.lineTo(5 * scale, -14 * scale);
+    context.moveTo(-10 * scale, 0);
+    context.lineTo(-16 * scale, 0);
+    context.moveTo(10 * scale, 0);
+    context.lineTo(16 * scale, 0);
+    context.stroke();
+
+    context.font = `${8 * scale}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    context.fillStyle = "rgba(216, 243, 255, 0.7)";
+    context.textAlign = "center";
+    context.fillText("DEPOT", 0, 28 * scale);
+    context.restore();
+  }
+
   function drawRendezvous(time, layout) {
     const ring = layout.rings[0];
-    const clientAngle = time * 0.075 + satellites[0].phase;
+    const clientAngle = time * shellSpeeds[0] + 0.15;
     const cycle = (time * 0.035) % (Math.PI * 2);
     const separation = 0.7 * (0.5 + 0.5 * Math.cos(cycle));
     const servicerAngle = clientAngle - separation;
@@ -114,7 +193,9 @@
 
     layout.rings.forEach((ring, index) => drawOrbit(ring, layout, 0.3 - index * 0.055));
 
-    satellites.slice(1).forEach((satellite) => {
+    drawEarth(layout);
+
+    constellation.forEach((satellite) => {
       const point = pointOnOrbit(
         layout.rings[satellite.orbit],
         time * satellite.speed + satellite.phase,
@@ -122,6 +203,9 @@
       );
       drawSatellite(point, satellite.scale, false);
     });
+
+    const depot = pointOnOrbit(layout.rings[1], time * shellSpeeds[1] + 5.05, layout);
+    drawDepot(depot);
 
     drawRendezvous(time, layout);
 
