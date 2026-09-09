@@ -16,6 +16,9 @@
       phase: (index / population) * Math.PI * 2 + orbit * 0.31,
       speed: shellSpeeds[orbit],
       scale: 0.46 + ((index + orbit) % 3) * 0.07,
+      identifier: `SAT-${orbit + 1}.${String(index + 1).padStart(2, "0")}`,
+      service: ["REPAIR", "REFUEL", "DEORBIT"][(index + orbit) % 3],
+      labelled: (index + orbit * 2) % 4 === 0,
     })),
   );
   const outerShellSpeeds = [0.021, -0.016];
@@ -137,6 +140,32 @@
     context.restore();
   }
 
+  function drawSatelliteLabel(point, identifier, service) {
+    if (width < 720) return;
+
+    const labelX = point.x + 24;
+    const labelY = point.y - 18;
+    context.save();
+    context.globalAlpha = 0.62;
+    context.strokeStyle = "rgba(161, 222, 255, 0.62)";
+    context.fillStyle = "rgba(4, 43, 85, 0.72)";
+    context.lineWidth = 0.8;
+    context.beginPath();
+    context.moveTo(point.x + 7, point.y - 5);
+    context.lineTo(labelX - 5, labelY + 6);
+    context.stroke();
+    context.fillRect(labelX - 5, labelY - 7, 76, 23);
+    context.strokeRect(labelX - 5, labelY - 7, 76, 23);
+
+    context.font = "7px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.textAlign = "left";
+    context.fillStyle = "rgba(220, 246, 255, 0.94)";
+    context.fillText(identifier, labelX, labelY);
+    context.fillStyle = "rgba(112, 205, 250, 0.9)";
+    context.fillText(`SERVICE: ${service}`, labelX, labelY + 10);
+    context.restore();
+  }
+
   function drawDepot(point, opacity = 1, size = 1) {
     const scale = (width < 720 ? 0.72 : 0.9) * size;
     context.save();
@@ -201,6 +230,9 @@
         layout,
       );
       drawSatellite(point, satellite.scale, false);
+      if (satellite.labelled) {
+        drawSatelliteLabel(point, satellite.identifier, satellite.service);
+      }
     });
 
     const depotAngle = time * shellSpeeds[1] + 5.05;
