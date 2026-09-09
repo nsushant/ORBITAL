@@ -18,6 +18,15 @@
       scale: 0.46 + ((index + orbit) % 3) * 0.07,
     })),
   );
+  const outerShellSpeeds = [0.021, -0.016];
+  const outerConstellation = [10, 12].flatMap((population, orbit) =>
+    Array.from({ length: population }, (_, index) => ({
+      orbit,
+      phase: (index / population) * Math.PI * 2 + orbit * 0.47,
+      speed: outerShellSpeeds[orbit],
+      scale: 0.42 + ((index + orbit) % 3) * 0.05,
+    })),
+  );
   function resize() {
     width = window.innerWidth;
     height = window.innerHeight;
@@ -38,6 +47,9 @@
       rings: compact
         ? [[240, 78], [315, 105], [390, 134]]
         : [[390, 128], [520, 172], [650, 220]],
+      outerRings: compact
+        ? [[520, 174], [650, 218]]
+        : [[880, 292], [1100, 368]],
     };
   }
 
@@ -106,10 +118,11 @@
     context.restore();
   }
 
-  function drawSatellite(point, scale = 1, active = false) {
+  function drawSatellite(point, scale = 1, active = false, opacity = 1) {
     context.save();
     context.translate(point.x, point.y);
     context.rotate(-0.18);
+    context.globalAlpha = opacity;
     context.strokeStyle = active ? "rgba(224, 247, 255, 0.98)" : "rgba(164, 220, 255, 0.76)";
     context.fillStyle = active ? "rgba(98, 198, 255, 0.96)" : "rgba(17, 100, 165, 0.86)";
     context.lineWidth = 1;
@@ -124,11 +137,12 @@
     context.restore();
   }
 
-  function drawDepot(point) {
-    const scale = width < 720 ? 0.72 : 0.9;
+  function drawDepot(point, opacity = 1, size = 1) {
+    const scale = (width < 720 ? 0.72 : 0.9) * size;
     context.save();
     context.translate(point.x, point.y);
     context.rotate(-0.18);
+    context.globalAlpha = opacity;
     context.lineWidth = 1;
     context.strokeStyle = "rgba(226, 247, 255, 0.92)";
     context.fillStyle = "rgba(25, 117, 178, 0.92)";
@@ -161,6 +175,20 @@
     const time = timestamp / 1000;
     const layout = geometry();
     context.clearRect(0, 0, width, height);
+
+    layout.outerRings.forEach((ring, index) => drawOrbit(ring, layout, 0.105 - index * 0.022));
+    outerConstellation.forEach((satellite) => {
+      const point = pointOnOrbit(
+        layout.outerRings[satellite.orbit],
+        time * satellite.speed + satellite.phase,
+        layout,
+      );
+      drawSatellite(point, satellite.scale, false, 0.42);
+    });
+
+    const outerDepotAngle = time * outerShellSpeeds[0] + 2.82;
+    const outerDepot = pointOnOrbit(layout.outerRings[0], outerDepotAngle, layout);
+    drawDepot(outerDepot, 0.55, 0.82);
 
     layout.rings.forEach((ring, index) => drawOrbit(ring, layout, 0.3 - index * 0.055));
 
