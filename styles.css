@@ -1,12 +1,14 @@
 :root {
-  color-scheme: light;
-  --ink: #102a43;
-  --muted: #526777;
-  --paper: #f5f3ed;
-  --surface: #fffefa;
-  --line: #cdd6dc;
-  --accent: #c44e32;
-  --accent-dark: #8f3420;
+  color-scheme: dark;
+  --ink: #eef8ff;
+  --muted: #a9cce8;
+  --paper: #052c59;
+  --paper-deep: #031d3d;
+  --surface: rgba(6, 56, 111, 0.74);
+  --line: rgba(157, 211, 249, 0.3);
+  --line-strong: rgba(192, 229, 255, 0.72);
+  --accent: #62c6ff;
+  --accent-bright: #bceaff;
   --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: Iowan Old Style, Baskerville, "Times New Roman", serif;
 }
@@ -23,11 +25,43 @@ html {
 }
 
 body {
+  position: relative;
   margin: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(90deg, transparent 0 7.5%, rgba(16, 42, 67, 0.06) 7.5% calc(7.5% + 1px), transparent calc(7.5% + 1px)),
-    var(--paper);
+  overflow-x: hidden;
+  background: radial-gradient(circle at 72% 18%, #0b4d8c 0, var(--paper) 34%, var(--paper-deep) 100%);
+}
+
+#orbital-field,
+.blueprint-grid {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#orbital-field {
+  z-index: 0;
+}
+
+.blueprint-grid {
+  z-index: 1;
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(164, 215, 250, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(164, 215, 250, 0.12) 1px, transparent 1px),
+    linear-gradient(rgba(164, 215, 250, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(164, 215, 250, 0.055) 1px, transparent 1px);
+  background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px;
+  mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.45) 72%, transparent 100%);
+}
+
+.site-header,
+main,
+footer {
+  position: relative;
+  z-index: 2;
 }
 
 a {
@@ -46,7 +80,7 @@ footer {
   align-items: center;
   justify-content: space-between;
   padding-block: 28px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .identity {
@@ -64,7 +98,8 @@ footer {
   width: 38px;
   height: 38px;
   place-items: center;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--accent-bright);
+  color: var(--accent-bright);
   font-family: var(--serif);
   font-size: 0.85rem;
 }
@@ -83,7 +118,7 @@ footer {
 .eyebrow,
 .project-topic {
   margin: 0 0 18px;
-  color: var(--accent-dark);
+  color: var(--accent-bright);
   font-size: 0.74rem;
   font-weight: 750;
   letter-spacing: 0.14em;
@@ -105,6 +140,7 @@ h1 {
   font-weight: 500;
   letter-spacing: -0.055em;
   line-height: 0.96;
+  text-shadow: 0 3px 28px rgba(0, 15, 35, 0.34);
 }
 
 .lede {
@@ -123,7 +159,7 @@ h1 {
   align-items: baseline;
   justify-content: space-between;
   padding-bottom: 16px;
-  border-bottom: 2px solid var(--ink);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .section-heading h2 {
@@ -145,10 +181,12 @@ h1 {
   gap: clamp(24px, 5vw, 72px);
   padding: clamp(36px, 6vw, 68px) 0;
   border-bottom: 1px solid var(--line);
+  background: linear-gradient(100deg, rgba(3, 29, 61, 0.52), rgba(7, 67, 126, 0.2) 65%, transparent);
+  backdrop-filter: blur(3px);
 }
 
 .project-number {
-  color: var(--accent);
+  color: var(--accent-bright);
   font-family: var(--serif);
   font-size: 1.25rem;
 }
@@ -181,7 +219,7 @@ h1 {
 .project-tags li {
   padding: 7px 11px;
   border: 1px solid var(--line);
-  background: rgba(255, 254, 250, 0.55);
+  background: rgba(24, 103, 166, 0.28);
   font-size: 0.75rem;
 }
 
@@ -197,8 +235,9 @@ h1 {
   align-items: center;
   gap: 10px;
   padding: 12px 17px;
-  background: var(--ink);
-  color: white;
+  border: 1px solid var(--accent-bright);
+  background: var(--accent-bright);
+  color: var(--paper-deep);
   font-size: 0.84rem;
   font-weight: 700;
   text-decoration: none;
@@ -207,7 +246,8 @@ h1 {
 
 .primary-action:hover,
 .primary-action:focus-visible {
-  background: var(--accent-dark);
+  background: transparent;
+  color: var(--accent-bright);
   transform: translateY(-2px);
 }
 
@@ -231,10 +271,6 @@ footer p {
 }
 
 @media (max-width: 640px) {
-  body {
-    background: var(--paper);
-  }
-
   .site-header,
   main,
   footer {
