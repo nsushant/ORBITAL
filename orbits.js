@@ -19,8 +19,8 @@
     })),
   );
   const shuttleMissions = [
-    { targetOrbit: 0, targetPhase: (2 / 9) * Math.PI * 2, cycleOffset: 0.08, duration: 24 },
-    { targetOrbit: 2, targetPhase: (7 / 13) * Math.PI * 2 + 0.62, cycleOffset: 0.57, duration: 30 },
+    { targetOrbit: 0, targetPhase: (2 / 9) * Math.PI * 2, cycleOffset: 0.08, duration: 72 },
+    { targetOrbit: 2, targetPhase: (7 / 13) * Math.PI * 2 + 0.62, cycleOffset: 0.57, duration: 90 },
   ];
 
   function resize() {
