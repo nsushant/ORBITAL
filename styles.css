@@ -195,19 +195,11 @@ h1 {
 }
 
 .project-card {
-  display: grid;
-  grid-template-columns: minmax(70px, 0.4fr) minmax(0, 3fr);
-  gap: clamp(24px, 5vw, 72px);
+  display: block;
   padding: clamp(36px, 6vw, 68px) 0;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(100deg, rgba(3, 29, 61, 0.52), rgba(7, 67, 126, 0.2) 65%, transparent);
   backdrop-filter: blur(3px);
-}
-
-.project-number {
-  color: var(--accent-bright);
-  font-family: var(--serif);
-  font-size: 1.25rem;
 }
 
 .project-content h3 {
@@ -290,8 +282,152 @@ h1 {
   transform: translateY(-2px);
 }
 
+.results-disclosure {
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.results-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 22px;
+  background: rgba(7, 62, 119, 0.78);
+  color: var(--accent-bright);
+  font-size: 0.8rem;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+  transition: background 160ms ease;
+}
+
+.results-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.results-disclosure > summary:hover,
+.results-disclosure > summary:focus-visible {
+  background: rgba(18, 91, 157, 0.82);
+}
+
+.disclosure-icon {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+.disclosure-icon::before,
+.disclosure-icon::after {
+  position: absolute;
+  top: 8px;
+  left: 3px;
+  width: 12px;
+  height: 1px;
+  background: currentColor;
+  content: "";
+  transition: transform 180ms ease;
+}
+
+.disclosure-icon::after {
+  transform: rotate(90deg);
+}
+
+.results-disclosure[open] .disclosure-icon::after {
+  transform: rotate(0);
+}
+
+.results-panel {
+  border-top: 1px solid var(--line);
+  background: rgba(3, 29, 61, 0.38);
+}
+
+.study-overview,
+.algorithm-results {
+  padding: clamp(44px, 6vw, 72px) 0;
+}
+
+.study-overview {
+  border-bottom: 1px solid var(--line);
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.65fr) minmax(0, 1.35fr);
+  gap: clamp(34px, 7vw, 88px);
+  padding-top: 40px;
+}
+
+.finding-grid {
+  display: grid;
+  gap: 1px;
+  align-content: start;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.finding-grid > div {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  align-items: baseline;
+  gap: 16px;
+  padding: 17px;
+  background: rgba(4, 42, 83, 0.94);
+}
+
+.finding-grid strong {
+  color: var(--accent-bright);
+  font-family: var(--serif);
+  font-size: 1.7rem;
+  font-weight: 500;
+}
+
+.finding-grid span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.paper-abstract {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.comparison-intro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(28px, 6vw, 72px);
+  padding: 38px 0 30px;
+}
+
+.comparison-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.comparison-figure {
+  margin: 0;
+  padding: 15px;
+  background: rgba(238, 248, 255, 0.96);
+}
+
+.comparison-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.comparison-figure figcaption {
+  padding: 10px 4px 0;
+  color: #244866;
+  font-size: 0.7rem;
+}
+
 .explorer {
-  padding-bottom: 112px;
+  padding: clamp(44px, 6vw, 72px) 0 0;
+  border-top: 1px solid var(--line);
 }
 
 .explorer-intro {
@@ -611,13 +747,17 @@ footer p {
     width: min(100% - 28px, 1120px);
   }
 
-  .project-card {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
   .project-summary {
     grid-template-columns: 1fr;
+  }
+
+  .overview-grid,
+  .comparison-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .results-disclosure > summary {
+    padding-inline: 16px;
   }
 
   .explorer-intro,

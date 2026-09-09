@@ -65,7 +65,6 @@
       </div>
 
       <article class="project-card">
-        <div class="project-number" aria-hidden="true">01</div>
         <div class="project-content">
           <p class="project-topic">Featured work · On-orbit servicing</p>
           <h3>Multi-objective mission planning for depot-supported on-orbit servicing</h3>
@@ -91,7 +90,62 @@
           </div>
         </div>
       </article>
-    </section>
+
+      <details class="results-disclosure">
+        <summary>
+          <span>Explore Results</span>
+          <span class="disclosure-icon" aria-hidden="true"></span>
+        </summary>
+
+        <div class="results-panel">
+          <section class="study-overview" aria-labelledby="study-overview-title">
+            <div class="section-heading">
+              <h2 id="study-overview-title">Study overview</h2>
+              <span>Paper abstract</span>
+            </div>
+            <div class="overview-grid">
+              <div class="finding-grid" aria-label="Principal findings">
+                <div><strong>45/45</strong><span>higher-hypervolume trials</span></div>
+                <div><strong>43/45</strong><span>better compromise solutions</span></div>
+                <div><strong>348</strong><span>clients across multiple LEO shells</span></div>
+              </div>
+              <p class="paper-abstract">
+                Orbital depots deployed together with service fleets can support the maintenance of
+                constellations in low Earth orbit. However, strategic depot placement and fleet-size
+                decisions are strongly coupled with operational client allocation and routing decisions.
+                This work proposes a multi-objective framework that evaluates cumulative ΔV,
+                service-fleet size, and the value of assets lost through insufficient coverage. A
+                multi-directional local search exploits the problem’s neighbourhood structure to construct
+                mission-level Pareto fronts. Across three demand scenarios, it achieves higher hypervolume
+                than NSGA-II in all 45 paired trials and a better compromise solution in 43. Pareto fronts
+                generated over a grid of candidate depot orbits then provide operating points to a
+                lexicographic mixed-integer model for preliminary orbital-depot architecture design.
+              </p>
+            </div>
+          </section>
+
+          <section class="algorithm-results" aria-labelledby="algorithm-results-title">
+            <div class="section-heading">
+              <h2 id="algorithm-results-title">Algorithm comparison</h2>
+              <span>Example Pareto fronts</span>
+            </div>
+            <div class="comparison-intro">
+              <p>
+                Representative nondominated fronts show the transfer-cost and unrecovered-value trade-off
+                obtained by multi-directional local search and NSGA-II under the same objective-evaluation
+                budget. Lower values are preferred on both axes.
+              </p>
+              <p>
+                The comparison supports a specific conclusion: coordinated routing and fleet-size
+                neighbourhoods improve Pareto-front approximation relative to the adopted NSGA-II encoding
+                and operators.
+              </p>
+            </div>
+            <figure class="comparison-figure">
+              <img src="assets/algorithm-pareto-fronts.png" alt="Pareto-front comparisons of MDLS and NSGA-II for reactive repair, planned refuelling, and end-of-life deorbit scenarios.">
+              <figcaption>Example Pareto fronts for the three demand scenarios reported in the paper.</figcaption>
+            </figure>
+          </section>
 
     <section class="explorer" aria-labelledby="explorer-title">
       <div class="section-heading">
@@ -179,6 +233,9 @@
           </p>
         </div>
       </div>
+    </section>
+        </div>
+      </details>
     </section>
   </main>
 
