@@ -19,8 +19,8 @@
     })),
   );
   const shuttleMissions = [
-    { targetOrbit: 0, targetPhase: 1.2, cycleOffset: 0.08, duration: 13 },
-    { targetOrbit: 2, targetPhase: 3.8, cycleOffset: 0.57, duration: 17 },
+    { targetOrbit: 0, targetPhase: (2 / 9) * Math.PI * 2, cycleOffset: 0.08, duration: 13 },
+    { targetOrbit: 2, targetPhase: (7 / 13) * Math.PI * 2 + 0.62, cycleOffset: 0.57, duration: 17 },
   ];
 
   function resize() {
@@ -195,6 +195,21 @@
     context.restore();
   }
 
+  function drawRendezvousHold(target, shuttle) {
+    context.save();
+    context.beginPath();
+    context.arc(target.x, target.y, 16, 0, Math.PI * 2);
+    context.strokeStyle = "rgba(190, 235, 255, 0.34)";
+    context.stroke();
+    context.beginPath();
+    context.moveTo(target.x, target.y);
+    context.lineTo(shuttle.x, shuttle.y);
+    context.strokeStyle = "rgba(211, 244, 255, 0.5)";
+    context.setLineDash([2, 3]);
+    context.stroke();
+    context.restore();
+  }
+
   function drawShuttleMissions(time, layout, depot) {
     shuttleMissions.forEach((mission) => {
       const target = pointOnOrbit(
@@ -203,8 +218,17 @@
         layout,
       );
       const rawCycle = ((time / mission.duration + mission.cycleOffset) % 1 + 1) % 1;
-      const outbound = rawCycle < 0.5;
-      const legProgress = outbound ? rawCycle * 2 : (rawCycle - 0.5) * 2;
+      const outboundEnd = 0.35;
+      const rendezvousEnd = 0.56;
+      const returnEnd = 0.91;
+      const outbound = rawCycle < outboundEnd;
+      const rendezvous = rawCycle >= outboundEnd && rawCycle < rendezvousEnd;
+      const returning = rawCycle >= rendezvousEnd && rawCycle < returnEnd;
+      const legProgress = outbound
+        ? rawCycle / outboundEnd
+        : returning
+          ? (rawCycle - rendezvousEnd) / (returnEnd - rendezvousEnd)
+          : 0;
       const eased = legProgress * legProgress * (3 - 2 * legProgress);
       const start = outbound ? depot : target;
       const end = outbound ? target : depot;
@@ -218,21 +242,31 @@
         y: middleY + (awayY / magnitude) * 42,
       };
 
-      context.save();
-      context.beginPath();
-      context.moveTo(start.x, start.y);
-      context.quadraticCurveTo(control.x, control.y, end.x, end.y);
-      context.strokeStyle = "rgba(143, 218, 255, 0.13)";
-      context.setLineDash([3, 7]);
-      context.stroke();
-      context.restore();
+      if (outbound || returning) {
+        context.save();
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.quadraticCurveTo(control.x, control.y, end.x, end.y);
+        context.strokeStyle = "rgba(143, 218, 255, 0.13)";
+        context.setLineDash([3, 7]);
+        context.stroke();
+        context.restore();
 
-      const shuttle = quadraticPoint(start, control, end, eased);
-      const tangentX = 2 * (1 - eased) * (control.x - start.x) + 2 * eased * (end.x - control.x);
-      const tangentY = 2 * (1 - eased) * (control.y - start.y) + 2 * eased * (end.y - control.y);
-      const heading = Math.atan2(tangentY, tangentX);
-      const endpointFade = Math.min(1, Math.sin(Math.PI * legProgress) * 2.8 + 0.2);
-      drawShuttle(shuttle, heading, endpointFade);
+        const shuttle = quadraticPoint(start, control, end, eased);
+        const tangentX = 2 * (1 - eased) * (control.x - start.x) + 2 * eased * (end.x - control.x);
+        const tangentY = 2 * (1 - eased) * (control.y - start.y) + 2 * eased * (end.y - control.y);
+        const heading = Math.atan2(tangentY, tangentX);
+        const endpointFade = Math.min(1, Math.sin(Math.PI * legProgress) * 2.8 + 0.2);
+        drawShuttle(shuttle, heading, endpointFade);
+      } else if (rendezvous) {
+        const pulse = Math.sin(((rawCycle - outboundEnd) / (rendezvousEnd - outboundEnd)) * Math.PI * 2);
+        const shuttle = { x: target.x + 13, y: target.y - 9 + pulse * 1.5 };
+        drawRendezvousHold(target, shuttle);
+        drawShuttle(shuttle, -0.18, 1);
+      } else {
+        const shuttle = { x: depot.x + 15, y: depot.y - 8 };
+        drawShuttle(shuttle, -0.18, 0.72);
+      }
     });
   }
 
