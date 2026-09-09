@@ -8,6 +8,7 @@
   <title>Sushanta Nigudkar | Research projects</title>
   <link rel="stylesheet" href="styles.css">
   <script src="orbits.js" defer></script>
+  <script src="pareto-fronts.js" defer></script>
   <script src="depot-data.js" defer></script>
   <script src="depot-explorer.js" defer></script>
 </head>
@@ -142,7 +143,11 @@
               </p>
             </div>
             <figure class="comparison-figure">
-              <img src="assets/algorithm-pareto-fronts.png" alt="Pareto-front comparisons of MDLS and NSGA-II for reactive repair, planned refuelling, and end-of-life deorbit scenarios.">
+              <div class="chart-legend" aria-hidden="true">
+                <span><i class="mdls-marker"></i>MDLS</span>
+                <span><i class="nsga-marker"></i>NSGA-II</span>
+              </div>
+              <div id="pareto-charts" role="img" aria-label="Pareto-front comparisons of MDLS and NSGA-II for reactive repair, planned refuelling, and end-of-life deorbit scenarios."></div>
               <figcaption>Example Pareto fronts for the three demand scenarios reported in the paper.</figcaption>
             </figure>
           </section>

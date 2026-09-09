@@ -409,19 +409,103 @@ h1 {
 
 .comparison-figure {
   margin: 0;
-  padding: 15px;
-  background: rgba(238, 248, 255, 0.96);
+  padding: 22px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(rgba(164, 215, 250, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(164, 215, 250, 0.045) 1px, transparent 1px),
+    rgba(3, 31, 65, 0.82);
+  background-size: 16px 16px;
 }
 
-.comparison-figure img {
+.chart-legend {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+}
+
+.mdls-marker {
+  border: 2px solid var(--accent-bright);
+  border-radius: 50%;
+}
+
+.nsga-marker {
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--accent);
+  border-left: 5px solid transparent;
+}
+
+#pareto-charts svg {
   display: block;
   width: 100%;
   height: auto;
+  margin-top: 8px;
+  overflow: visible;
+}
+
+#pareto-charts .chart-grid {
+  stroke: rgba(156, 215, 250, 0.1);
+  stroke-width: 1;
+}
+
+#pareto-charts .chart-axis {
+  stroke: rgba(188, 234, 255, 0.52);
+  stroke-width: 1;
+}
+
+#pareto-charts .chart-title,
+#pareto-charts .chart-axis-label,
+#pareto-charts .chart-tick {
+  fill: var(--muted);
+  font-family: var(--sans);
+}
+
+#pareto-charts .chart-title {
+  fill: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+#pareto-charts .chart-axis-label {
+  font-size: 10px;
+}
+
+#pareto-charts .chart-tick {
+  font-size: 9px;
+}
+
+#pareto-charts .pareto-point {
+  transition: fill 120ms ease, stroke-width 120ms ease;
+}
+
+#pareto-charts .pareto-point:hover {
+  fill: rgba(188, 234, 255, 0.24);
+  stroke-width: 2.5;
+}
+
+.chart-error {
+  padding: 40px;
+  color: var(--muted);
+  text-align: center;
 }
 
 .comparison-figure figcaption {
   padding: 10px 4px 0;
-  color: #244866;
+  color: var(--muted);
   font-size: 0.7rem;
 }
 
