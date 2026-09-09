@@ -395,6 +395,43 @@ h1 {
   font-weight: 500;
 }
 
+.explorer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 18px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: rgba(4, 37, 75, 0.82);
+}
+
+.explorer-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.explorer-toolbar p strong {
+  color: var(--ink);
+}
+
+#reset-architecture {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+#reset-architecture:hover,
+#reset-architecture:focus-visible {
+  background: rgba(98, 198, 255, 0.1);
+}
+
 .explorer-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.18fr) minmax(360px, 0.82fr);
@@ -455,6 +492,33 @@ h1 {
   font-weight: 650;
 }
 
+.feasibility-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-left: 3px solid #70e2b2;
+  background: rgba(42, 158, 111, 0.12);
+  font-size: 0.72rem;
+}
+
+.feasibility-status span {
+  color: var(--muted);
+  text-align: right;
+}
+
+.feasibility-status.is-infeasible {
+  border-left-color: #ff8c7a;
+  background: rgba(210, 73, 56, 0.14);
+}
+
+.feasibility-status.is-warning {
+  border-left-color: #ffd27a;
+  background: rgba(211, 153, 48, 0.13);
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -496,6 +560,27 @@ td:first-child {
   border-radius: 50%;
   color: var(--accent-bright);
   font-size: 0.68rem;
+}
+
+.row-state {
+  margin-left: 5px;
+  color: var(--accent-bright);
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.selected-depot {
+  cursor: grab;
+  touch-action: none;
+}
+
+.selected-depot:active {
+  cursor: grabbing;
+}
+
+.selected-depot:focus circle:first-child {
+  stroke-width: 4;
 }
 
 .solver-note {
@@ -559,6 +644,16 @@ footer p {
 
   .result-summary > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
+  }
+
+  .explorer-toolbar,
+  .feasibility-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .feasibility-status span {
+    text-align: left;
   }
 
   .depot-map {

@@ -8,6 +8,7 @@
   <title>Sushanta Nigudkar | Research projects</title>
   <link rel="stylesheet" href="styles.css">
   <script src="orbits.js" defer></script>
+  <script src="depot-data.js" defer></script>
   <script src="depot-explorer.js" defer></script>
 </head>
 <body>
@@ -129,11 +130,16 @@
         <div><span>Recovered value</span><strong id="summary-value">$204.4M</strong></div>
       </div>
 
+      <div class="explorer-toolbar">
+        <p><strong>Move a depot:</strong> drag a numbered marker to another evaluated grid location.</p>
+        <button id="reset-architecture" type="button">Reset to MILP optimum</button>
+      </div>
+
       <div class="explorer-grid">
         <figure class="depot-map">
           <figcaption>
             Candidate orbital-depot design space
-            <span>Selected locations are numbered</span>
+            <span>Solid: current · ring: published optimum</span>
           </figcaption>
           <svg id="depot-map" viewBox="0 0 720 430" role="img" aria-labelledby="map-title map-description">
             <title id="map-title">Selected orbital depot locations</title>
@@ -147,6 +153,10 @@
             <span>Loss cap <strong>40% per portfolio</strong></span>
             <span>Per-depot ΔV cap <strong>12,000 m/s</strong></span>
           </div>
+          <div id="feasibility-status" class="feasibility-status is-feasible" aria-live="polite">
+            <strong>Feasible architecture</strong>
+            <span id="feasibility-detail">Published lexicographic optimum</span>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -156,13 +166,16 @@
                   <th scope="col">Fleet</th>
                   <th scope="col">ΔV</th>
                   <th scope="col">Cost</th>
+                  <th scope="col">Value</th>
                 </tr>
               </thead>
               <tbody id="depot-table"></tbody>
             </table>
           </div>
           <p class="solver-note" id="solver-note">
-            Both lexicographic stages solved to proven optimality with HiGHS.
+            Published locations and operating points were solved to proven
+            optimality with HiGHS. A moved depot uses the highest-coverage
+            retained Pareto point at its new grid location under the ΔV cap.
           </p>
         </div>
       </div>
