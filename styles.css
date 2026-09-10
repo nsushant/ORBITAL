@@ -338,13 +338,14 @@ h1 {
 }
 
 .results-panel {
+  --results-gutter: clamp(20px, 4vw, 48px);
   border-top: 1px solid var(--line);
   background: rgba(3, 29, 61, 0.38);
 }
 
 .study-overview,
 .algorithm-results {
-  padding: clamp(44px, 6vw, 72px) 0;
+  padding: clamp(44px, 6vw, 72px) var(--results-gutter);
 }
 
 .study-overview {
@@ -510,7 +511,7 @@ h1 {
 }
 
 .explorer {
-  padding: clamp(44px, 6vw, 72px) 0 0;
+  padding: clamp(44px, 6vw, 72px) var(--results-gutter) 0;
   border-top: 1px solid var(--line);
 }
 
