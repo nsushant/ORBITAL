@@ -8,7 +8,7 @@
   let pixelRatio = 1;
   let animationFrame = 0;
 
-  const shellSpeeds = [0.075, -0.048, 0.034];
+  const shellSpeeds = [0.075, 0.048, 0.034];
   const shellPopulations = [9, 11, 13];
   const constellation = shellPopulations.flatMap((population, orbit) =>
     Array.from({ length: population }, (_, index) => ({
@@ -21,7 +21,7 @@
       labelled: (index + orbit * 2) % 4 === 0,
     })),
   );
-  const outerShellSpeeds = [0.021, -0.016];
+  const outerShellSpeeds = [0.021, 0.016];
   const outerConstellation = [10, 12].flatMap((population, orbit) =>
     Array.from({ length: population }, (_, index) => ({
       orbit,
