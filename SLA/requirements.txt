@@ -1,0 +1,5 @@
+numpy
+numba
+h5py
+jsonschema>=4.18
+psycopg[binary]>=3.2

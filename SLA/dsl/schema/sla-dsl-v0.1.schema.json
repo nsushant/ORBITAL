@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbital.example/schemas/sla-dsl-v0.1.schema.json",
+  "title": "OOS SLA problem definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dsl_version", "problem_id", "as_of", "sla", "provider_state", "launch_access", "decision_policy", "models"],
+  "properties": {
+    "dsl_version": {"const": "0.1"},
+    "problem_id": {"$ref": "#/$defs/id"},
+    "as_of": {"$ref": "#/$defs/dateTime"},
+    "sla": {"$ref": "#/$defs/sla"},
+    "provider_state": {"$ref": "#/$defs/providerState"},
+    "launch_access": {"$ref": "#/$defs/launchAccess"},
+    "decision_policy": {"$ref": "#/$defs/decisionPolicy"},
+    "models": {"$ref": "#/$defs/models"},
+    "metadata": {"$ref": "#/$defs/metadata"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "dateTime": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "seconds": {"type": "number"},
+    "durationSeconds": {"type": "number", "minimum": 0},
+    "nonnegative": {"type": "number", "minimum": 0},
+    "positive": {"type": "number", "exclusiveMinimum": 0},
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"$ref": "#/$defs/nonnegative"},
+        "unit": {"enum": ["kg", "item", "m3"]}
+      }
+    },
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "currency"],
+      "properties": {
+        "value": {"$ref": "#/$defs/nonnegative"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      }
+    },
+    "orbit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "semimajor_axis_km", "inclination_rad", "raan_rad"],
+      "properties": {
+        "reference": {"const": "earth_circular"},
+        "semimajor_axis_km": {"type": "number", "exclusiveMinimum": 6378},
+        "inclination_rad": {"type": "number", "minimum": 0, "maximum": 3.141592653589793},
+        "raan_rad": {"type": "number", "minimum": 0, "exclusiveMaximum": 6.283185307179586},
+        "epoch_s": {"$ref": "#/$defs/seconds"}
+      }
+    },
+    "metricComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "operator", "value"],
+      "properties": {
+        "metric": {
+          "enum": [
+            "delivered_quantity", "completion_time_s", "response_time_s",
+            "task_completed", "terminal_perigee_altitude_km", "client_released",
+            "inventory_level", "total_cost", "scenario_success"
+          ]
+        },
+        "operator": {"enum": [">=", "<=", "=="]},
+        "value": {"type": ["number", "string", "boolean"]},
+        "unit": {"type": "string"}
+      }
+    },
+    "rule": {
+      "oneOf": [
+        {"$ref": "#/$defs/metricComparison"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all"],
+          "properties": {"all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rule"}}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["any"],
+          "properties": {"any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rule"}}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["not"],
+          "properties": {"not": {"$ref": "#/$defs/rule"}}
+        }
+      ]
+    },
+    "commodityDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "commodity", "quantity", "nominal_service_duration_s"],
+      "properties": {
+        "type": {"const": "commodity_delivery"},
+        "commodity": {"$ref": "#/$defs/id"},
+        "quantity": {"$ref": "#/$defs/quantity"},
+        "nominal_service_duration_s": {"$ref": "#/$defs/durationSeconds"},
+        "required_capabilities": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "task_code", "parts", "required_capabilities"],
+      "properties": {
+        "type": {"const": "repair"},
+        "task_code": {"$ref": "#/$defs/id"},
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["commodity", "quantity"],
+            "properties": {"commodity": {"$ref": "#/$defs/id"}, "quantity": {"$ref": "#/$defs/quantity"}}
+          }
+        },
+        "required_capabilities": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "nominal_service_duration_s": {"$ref": "#/$defs/durationSeconds"}
+      }
+    },
+    "deorbit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "maximum_terminal_perigee_altitude_km", "required_capabilities"],
+      "properties": {
+        "type": {"const": "deorbit"},
+        "maximum_terminal_perigee_altitude_km": {"$ref": "#/$defs/nonnegative"},
+        "required_capabilities": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "nominal_service_duration_s": {"$ref": "#/$defs/durationSeconds"}
+      }
+    },
+    "sla": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sla_id", "customer_id", "service", "client", "service_window", "success", "reliability", "commercial_terms"],
+      "properties": {
+        "sla_id": {"$ref": "#/$defs/id"},
+        "customer_id": {"$ref": "#/$defs/id"},
+        "service": {"oneOf": [{"$ref": "#/$defs/commodityDelivery"}, {"$ref": "#/$defs/repair"}, {"$ref": "#/$defs/deorbit"}]},
+        "client": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["client_id", "target_orbit"],
+          "properties": {"client_id": {"$ref": "#/$defs/id"}, "target_orbit": {"$ref": "#/$defs/orbit"}}
+        },
+        "service_window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["earliest_s", "latest_s"],
+          "properties": {"earliest_s": {"$ref": "#/$defs/seconds"}, "latest_s": {"$ref": "#/$defs/seconds"}}
+        },
+        "success": {"$ref": "#/$defs/rule"},
+        "reliability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["measure", "minimum", "scenario_model"],
+          "properties": {
+            "measure": {"enum": ["on_time_completion_probability", "service_success_probability"]},
+            "minimum": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "scenario_model": {"$ref": "#/$defs/id"}
+          }
+        },
+        "commercial_terms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revenue", "failure_penalty"],
+          "properties": {
+            "revenue": {"$ref": "#/$defs/money"},
+            "failure_penalty": {"$ref": "#/$defs/money"},
+            "late_penalty_per_second": {"$ref": "#/$defs/money"},
+            "cancellation_penalty": {"$ref": "#/$defs/money"}
+          }
+        }
+      }
+    },
+    "inventoryItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commodity", "quantity"],
+      "properties": {"commodity": {"$ref": "#/$defs/id"}, "quantity": {"$ref": "#/$defs/quantity"}, "reserved": {"$ref": "#/$defs/quantity"}}
+    },
+    "servicer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servicer_id", "orbit", "dry_mass_kg", "propellant_kg", "maximum_payload_kg", "capabilities", "available_from_s", "propulsion"],
+      "properties": {
+        "servicer_id": {"$ref": "#/$defs/id"}, "orbit": {"$ref": "#/$defs/orbit"},
+        "dry_mass_kg": {"$ref": "#/$defs/positive"}, "propellant_kg": {"$ref": "#/$defs/nonnegative"},
+        "maximum_payload_kg": {"$ref": "#/$defs/nonnegative"},
+        "capabilities": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "available_from_s": {"$ref": "#/$defs/seconds"},
+        "propulsion": {
+          "type": "object", "additionalProperties": false, "required": ["type", "isp_s", "thrust_n"],
+          "properties": {"type": {"enum": ["low_thrust"]}, "isp_s": {"$ref": "#/$defs/positive"}, "thrust_n": {"$ref": "#/$defs/positive"}}
+        }
+      }
+    },
+    "depot": {
+      "type": "object", "additionalProperties": false, "required": ["depot_id", "orbit", "commissioned_from_s", "inventory"],
+      "properties": {
+        "depot_id": {"$ref": "#/$defs/id"}, "orbit": {"$ref": "#/$defs/orbit"},
+        "commissioned_from_s": {"$ref": "#/$defs/seconds"},
+        "inventory": {"type": "array", "items": {"$ref": "#/$defs/inventoryItem"}}
+      }
+    },
+    "providerState": {
+      "type": "object", "additionalProperties": false, "required": ["state_id", "observation_time_s", "servicers", "depots", "existing_commitments"],
+      "properties": {
+        "state_id": {"$ref": "#/$defs/id"}, "observation_time_s": {"$ref": "#/$defs/seconds"},
+        "servicers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/servicer"}},
+        "depots": {"type": "array", "items": {"$ref": "#/$defs/depot"}},
+        "existing_commitments": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "launchAccess": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model_id", "model_type", "information_cutoff_s", "horizon_end_s", "generated_scenarios", "marks", "capacity_evidence_allowed", "random_seed"],
+      "properties": {
+        "model_id": {"$ref": "#/$defs/id"}, "model_type": {"const": "joint_generative_calendar"},
+        "information_cutoff_s": {"$ref": "#/$defs/seconds"}, "horizon_end_s": {"$ref": "#/$defs/seconds"},
+        "generated_scenarios": {"type": "integer", "minimum": 1},
+        "marks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["launch_time", "site", "provider", "vehicle", "target_orbit", "purchasable_capacity", "price", "booking_deadline"]}},
+        "capacity_evidence_allowed": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["A", "B", "C", "D"]}},
+        "random_seed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false, "required": ["stage"],
+      "properties": {"stage": {"enum": ["offer", "booking", "post_launch_realisation", "operations"]}, "required": {"type": "boolean"}}
+    },
+    "decisionPolicy": {
+      "type": "object", "additionalProperties": false, "required": ["policy_id", "decisions", "freeze_rules"],
+      "properties": {
+        "policy_id": {"$ref": "#/$defs/id"},
+        "decisions": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/decision"}},
+        "freeze_rules": {
+          "type": "array", "items": {
+            "type": "object", "additionalProperties": false, "required": ["decision", "relative_to", "offset_s"],
+            "properties": {"decision": {"$ref": "#/$defs/id"}, "relative_to": {"enum": ["offer_time", "booking_deadline", "launch_time", "service_window_start"]}, "offset_s": {"$ref": "#/$defs/seconds"}}
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "object", "additionalProperties": false, "required": ["transfer", "planning", "service"],
+      "properties": {
+        "transfer": {"enum": ["edelbaum-j2-v1"]},
+        "planning": {"enum": ["two-stage-sla-v1"]},
+        "service": {"enum": ["commodity-delivery-v1", "repair-v1", "deorbit-v1"]}
+      }
+    },
+    "metadata": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}
+    }
+  }
+}

@@ -1,0 +1,333 @@
+\documentclass[review,12pt,authoryear]{elsarticle}
+
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\journal{Advances in Space Research}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\dv}{\Delta v}
+\newcommand{\state}{\mathcal{S}}
+\newcommand{\scenset}{\Omega}
+
+\begin{document}
+\begin{frontmatter}
+
+\title{A Rolling-Horizon Framework for Service-Level Agreement Acceptance and
+Infrastructure Planning in On-Orbit Servicing}
+
+\author[inst1]{Author Name\corref{cor1}}
+\ead{author@example.com}
+\cortext[cor1]{Corresponding author.}
+\address[inst1]{Institution, Department, City, Country}
+
+\begin{abstract}
+On-orbit servicing (OOS) operators interact with potential customers through
+service-level agreements (SLAs). Deciding whether to accept an SLA requires
+more than testing the proposed contract in isolation: the operator must account
+for its current fleet, depot inventory, previously accepted commitments,
+uncertain launch opportunities, and the operational consequences of serving the
+new customer. This paper presents a rolling-horizon decision framework that
+links SLA acceptance to launch-capacity bookings, infrastructure deployment,
+inventory replenishment, and service-vehicle routing. Candidate architectures
+are generated through multi-objective search and evaluated using a
+mixed-integer launch-manifest model under sampled launch and demand outcomes.
+The resulting reliability measure is the probability that the complete pool of
+accepted SLAs can be fulfilled, rather than a user-specified input. The
+framework returns an accept, defer, reject, or accept-with-expansion
+recommendation together with expected commercial value and operationally
+feasible counterfactuals. A research demonstrator illustrates how a contract
+can be feasible with existing assets, feasible only after resupply or
+deployment, or commercially unattractive once uncertainty and prior
+commitments are included. The formulation provides an explainable bridge
+between customer-facing contract decisions and the physical planning of an OOS
+network.
+\end{abstract}
+
+\begin{keyword}
+on-orbit servicing \sep service-level agreement \sep rolling-horizon planning
+\sep launch uncertainty \sep space logistics \sep multi-objective optimisation
+\end{keyword}
+\end{frontmatter}
+
+\section{Introduction}
+\label{sec:introduction}
+
+On-orbit servicing is shifting from isolated demonstrations toward repeated
+commercial operations involving inspection, refuelling, repair, relocation,
+and life extension. An operator offering these services must decide both which
+customer contracts to accept and what infrastructure to deploy and operate.
+Treating these decisions separately can produce contracts that appear
+profitable but cannot be delivered with the available vehicles, inventory, or
+launch opportunities.
+
+We represent customer commitments as SLAs. An SLA specifies a set of client
+spacecraft, required services and quantities, service windows, contract value,
+and a maximum acceptable loss boundary. The loss boundary limits the fraction
+of client-asset value that may remain unserved over the contract horizon. The
+operator receives candidate SLAs sequentially while the operational state and
+information about future launches evolve. SLA acceptance is therefore a
+rolling-horizon decision problem.
+
+This paper makes three contributions. First, it formulates SLA acceptance as an
+integrated commercial and operational decision rather than a static contract
+screen. Second, it couples multi-objective service-architecture search to an
+explicit launch-manifest and infrastructure-selection problem under uncertain
+outcomes. Third, it retains both Pareto-optimal and dominated feasible
+solutions, allowing rejected proposals to be accompanied by operationally
+supported counterfactuals such as a later deadline, smaller scope, or additional
+deployment.
+
+\section{Rolling-horizon SLA decision problem}
+\label{sec:problem}
+
+At decision epoch $\tau$, the operator state is
+\begin{equation}
+ \state_\tau=(\mathcal{A}_\tau,\mathcal{V}_\tau,\mathcal{D}_\tau,
+ \mathbf{q}_\tau,\mathcal{L}_\tau,\mathcal{M}_\tau,\mathcal{I}_\tau),
+\end{equation}
+where $\mathcal{A}_\tau$ is the pool of accepted SLAs,
+$\mathcal{V}_\tau$ the available service vehicles,
+$\mathcal{D}_\tau$ the deployed depots, $\mathbf{q}_\tau$ their inventories,
+$\mathcal{L}_\tau$ the uncertain launch calendar, $\mathcal{M}_\tau$ the booked
+manifests, and $\mathcal{I}_\tau$ the information available at epoch $\tau$.
+All durations are stored in seconds and each state has an explicit timestamp.
+
+A proposed SLA $k$ is
+\begin{equation}
+ c_k=(\mathcal{T}_k,\mathbf{d}_k,[t_k^-,t_k^+],R_k,\ell_k,P_k),
+\end{equation}
+where $\mathcal{T}_k$ is the target set, $\mathbf{d}_k$ contains service
+quantities, $[t_k^-,t_k^+]$ is the service window, $R_k$ is contract revenue,
+$\ell_k$ is the acceptable loss fraction, and $P_k$ specifies penalties. The
+candidate is evaluated together with all earlier commitments:
+\begin{equation}
+ \mathcal{A}_\tau^+=\mathcal{A}_\tau\cup\{c_k\}.
+\end{equation}
+
+Let $\omega\in\scenset$ denote a joint scenario with probability $p_\omega$.
+Each scenario contains launch time, destination, purchasable payload capacity,
+delay or cancellation, service demand, and operational availability. These
+variables are sampled jointly because launch date, destination, provider,
+vehicle, and capacity are coupled. The optimisation accepts any weighted
+scenario set, including samples from an empirical Bayesian launch model.
+
+The framework returns: accept using existing assets; accept with a specified
+resupply or deployment; defer to a later window; or reject.
+
+\section{Integrated computational framework}
+\label{sec:framework}
+
+At every decision epoch, the framework:
+\begin{enumerate}
+ \item parses and validates the proposed SLA;
+ \item combines it with previously accepted commitments;
+ \item calculates time-dependent transfer costs;
+ \item generates service routes and single-depot architectures;
+ \item constructs multi-depot launch and deployment manifests;
+ \item evaluates every plan across the joint scenario set;
+ \item retains a feasible archive and extracts its Pareto front;
+ \item recommends an action and reports counterfactual alternatives; and
+ \item updates the rolling state after explicit acceptance.
+\end{enumerate}
+
+Natural-language processing only translates customer input into the contract
+schema. Deterministic validation remains authoritative: missing targets,
+ambiguous per-spacecraft quantities, invalid orbital elements, and absent
+commercial terms trigger clarification before optimisation.
+
+\section{Time-dependent transfer-cost model}
+\label{sec:transfer}
+
+The demonstrator uses a thrust--coast--thrust approximation based on Edelbaum's
+analytical low-thrust transfer model \citep{edelbaum1961}. For circular-orbit
+velocities $v_0$ and $v_f$, with plane change $\Delta i$,
+\begin{equation}
+ \dv_{\mathrm{E}}=
+ \sqrt{v_0^2+v_f^2-2v_0v_f\cos\left(\frac{\pi}{2}\Delta i\right)}.
+\end{equation}
+The propellant requirement and powered duration are
+\begin{align}
+ m_p&=m_0\left[1-\exp\left(-\frac{\dv_{\mathrm{E}}}
+ {I_{\mathrm{sp}}g_0}\right)\right],\\
+ t_b&=\frac{m_p I_{\mathrm{sp}}g_0}{T}.
+\end{align}
+
+RAAN is closed using natural $J_2$ drift during coast arcs:
+\begin{equation}
+ \dot{\Omega}_{J_2}=-\frac{3}{2}J_2n
+ \left(\frac{R_E}{a(1-e^2)}\right)^2\cos i.
+\end{equation}
+Departure epoch and time of flight therefore affect feasibility and cost.
+Values are precomputed in a lookup table indexed by origin, destination,
+departure epoch, and time of flight. The demonstrator uses 30-day departure
+increments and flight times of 30, 60, 90, 120, 180, and 240 days. This
+conservative model supports rapid architecture screening; high-fidelity
+trajectory optimisation is required before execution.
+
+\section{Multi-shuttle service routing}
+\label{sec:routing}
+
+For a depot and its assigned requests, multi-directional local search (MDLS)
+explores service sequences and vehicle allocations \citep{tricoire2012}. A
+routing solution $r$ is evaluated through
+\begin{align}
+ f_1(r)&=\sum_{v\in\mathcal{V}}\sum_{(i,j)\in r_v}\dv_{ij},\\
+ f_2(r)&=\sum_{v\in\mathcal{V}}u_v,\\
+ f_3(r)&=\sum_{k\in\mathcal{A}_\tau^+}W_k[1-y_k(r)],
+\end{align}
+where $u_v$ indicates vehicle use, $y_k(r)$ indicates fulfilment of SLA $k$,
+and $W_k$ is protected asset value. These objectives represent operational
+effort, fleet requirement, and unrecovered value.
+
+The search produces non-dominated single-depot, multi-shuttle concepts for each
+candidate depot. The full feasible archive is retained. Dominated plans are
+excluded from the primary decision but remain useful for counterfactuals.
+
+\section{Launch manifest and infrastructure selection}
+\label{sec:manifest}
+
+The architecture layer chooses candidate servicers, depots, and
+commodity-specific resupply lots. Let $z_j$ indicate selection of item $j$ and
+$x_{jl}^{\omega}$ its assignment to launch $l$ under scenario $\omega$. With
+scenario capacity $C_l^\omega$ and compatibility $a_{jl}^\omega$,
+\begin{align}
+ \sum_lx_{jl}^\omega&=z_j &&\forall j,\omega,\\
+ \sum_jm_jx_{jl}^\omega&\le C_l^\omega &&\forall l,\omega,\\
+ x_{jl}^\omega&\le a_{jl}^\omega &&\forall j,l,\omega.
+\end{align}
+Prerequisite constraints ensure, for example, that resupply is selected only
+for an existing or simultaneously deployed depot. For at most 16 optional
+items, the demonstrator enumerates the binary manifest space exactly. A MILP
+solver can replace enumeration at larger scale without changing the interface.
+
+\section{Reliability and commercial decision model}
+\label{sec:decision}
+
+Let $y_{k\omega}(x)=1$ when architecture $x$ fulfils SLA $k$ in scenario
+$\omega$. Its reliability is
+\begin{equation}
+ \rho_k(x)=\sum_{\omega\in\scenset}p_\omega y_{k\omega}(x).
+\end{equation}
+Launch disruption is embedded in $\rho_k$ because delayed, cancelled,
+misdirected, or capacity-constrained launches alter fulfilment. Reliability is
+therefore an output of the coupled model. The SLA loss boundary imposes
+\begin{equation}
+ \rho_k(x)\ge 1-\ell_k.
+\end{equation}
+
+Expected net value is
+\begin{equation}
+ \mathrm{ENV}(x)=
+ \sum_{k\in\mathcal{A}_\tau^+}R_k\rho_k(x)
+ -C_{\mathrm{launch}}(x)-C_{\mathrm{manufacture}}(x)
+ -\E_\omega[P(x,\omega)]-c_{\dv}f_1(x).
+\end{equation}
+Among reliable and physically feasible plans, the recommended plan maximises
+expected net value. An expansion decision is returned when new assets or
+resupply are required. Deferral is returned when a later window yields a
+feasible positive-value plan. Otherwise the proposal is rejected.
+
+\section{State transition and counterfactuals}
+\label{sec:rolling}
+
+After acceptance, the selected manifest and reservations become commitments:
+\begin{equation}
+ \state_{\tau+1}=
+ \Phi(\state_\tau,c_k,x_\tau,\xi_{\tau:\tau+1}),
+\end{equation}
+where $\xi_{\tau:\tau+1}$ contains observed launches, service events, demand,
+and inventory changes. The next SLA is evaluated against the updated state.
+
+For a rejected or marginal proposal, the framework searches the archive for
+nearby feasible contracts. A distance measure may combine relative changes in
+quantity, deadline, target scope, and revenue. The nearest alternatives are
+Pareto filtered before presentation, so every counterfactual has an evaluated
+operational plan behind it.
+
+\section{Research demonstrator}
+\label{sec:demonstrator}
+
+The demonstrator exposes the framework through a local web interface and a
+notebook. A user describes a contract in natural language; the system requests
+missing or ambiguous information and displays the structured interpretation.
+Results include the recommendation, reliability, expected value, launch
+manifest, depot and vehicle use, service sequence, and feasible alternatives.
+
+\begin{table}[ht]
+\centering
+\caption{Illustrative behaviour of the integrated decision framework.}
+\label{tab:cases}
+\begin{tabular}{p{0.25\linewidth}p{0.25\linewidth}p{0.38\linewidth}}
+\toprule
+Request & Recommendation & Operational interpretation\\
+\midrule
+20 kg xenon & Accept & Existing inventory and vehicle capacity cover the SLA.\\
+100 kg xenon & Accept with expansion & Two 40 kg commodity resupply lots are
+manifested before service.\\
+Forty spacecraft at 20 kg each within one year & Reject or defer & Aggregate
+800 kg demand cannot meet the requested deadline at the required reliability
+with the candidate architecture.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+\label{sec:discussion}
+
+The framework makes the commercial recommendation traceable to launch slots,
+deployed assets, inventory flows, and service routes. Its rolling state also
+prevents the same capacity from being promised twice.
+
+Several limitations remain. The analytical transfer model does not provide a
+flight-ready trajectory. Launch scenarios require calibration and back-testing.
+Service duration, failure modes, degradation, ground operations, and recurring
+costs require greater fidelity. Exact enumeration is suitable only for small
+candidate sets. A full numerical study must compare sequential acceptance
+policies, measure the value of launch information, and test sensitivity to
+contractual loss boundaries.
+
+Validation should therefore proceed in stages: verify physical feasibility
+against trajectory and scheduling tools; back-test uncertainty models on
+historical launch calendars; and evaluate acceptance policies using synthetic
+and partner-provided contract portfolios.
+
+\section{Conclusions}
+\label{sec:conclusion}
+
+This paper presented a rolling-horizon framework for accepting and planning OOS
+SLAs. It connects customer contracts to fleet state, inventory, prior
+commitments, uncertain launch capacity, infrastructure deployment, and vehicle
+routes. Multi-objective architecture search supplies operating concepts, while
+manifest selection and scenario evaluation determine whether contractual loss
+boundaries can be met. Reliability emerges from the model and includes launch
+disruption. Retaining the feasible archive makes counterfactual recommendations
+operationally defensible.
+
+Future work will calibrate the joint launch-access model, replace screening
+transfers with validated trajectory estimates, scale the manifest problem, and
+evaluate the economic value of integrated rolling SLA acceptance.
+
+\section*{Data and code availability}
+The present implementation is a research demonstrator. The data and code
+availability statement will be completed for submission.
+
+\section*{Declaration of competing interest}
+The authors declare no known competing financial interests or personal
+relationships that could have appeared to influence this work.
+
+\section*{Acknowledgements}
+Acknowledgements will be added for submission.
+
+\begin{thebibliography}{00}
+\bibitem[Edelbaum(1961)]{edelbaum1961}
+Edelbaum, T.N., 1961. Propulsion requirements for controllable satellites.
+ARS Journal 31(8), 1079--1089.
+
+\bibitem[Tricoire(2012)]{tricoire2012}
+Tricoire, F., 2012. Multi-directional local search.
+Computers \& Operations Research 39(12), 3089--3101.
+\end{thebibliography}
+
+\end{document}

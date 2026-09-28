@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sla
+      POSTGRES_USER: sla
+      POSTGRES_PASSWORD: ${SLA_POSTGRES_PASSWORD:-sla-local-dev}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+      - ./storage/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sla -d sla"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

@@ -1,0 +1,21 @@
+{
+  "dsl_version": "0.1", "problem_id": "DEMO-DEORBIT-001", "as_of": "2030-01-01T00:00:00Z",
+  "sla": {
+    "sla_id": "SLA-DEORBIT-001", "customer_id": "CUSTOMER-C",
+    "service": {"type": "deorbit", "maximum_terminal_perigee_altitude_km": 300, "required_capabilities": ["capture", "orbit-lowering"], "nominal_service_duration_s": 432000},
+    "client": {"client_id": "SAT-EOL-09", "target_orbit": {"reference": "earth_circular", "semimajor_axis_km": 7178.137, "inclination_rad": 1.7017, "raan_rad": 4.0}},
+    "service_window": {"earliest_s": 7776000, "latest_s": 31449600},
+    "success": {"all": [{"metric": "terminal_perigee_altitude_km", "operator": "<=", "value": 300, "unit": "km"}, {"metric": "client_released", "operator": "==", "value": true}, {"metric": "completion_time_s", "operator": "<=", "value": 31449600, "unit": "s"}]},
+    "reliability": {"measure": "service_success_probability", "minimum": 0.95, "scenario_model": "public-launch-access-v1"},
+    "commercial_terms": {"revenue": {"value": 22000000, "currency": "EUR"}, "failure_penalty": {"value": 14000000, "currency": "EUR"}}
+  },
+  "provider_state": {
+    "state_id": "STATE-2030-01-01", "observation_time_s": 0,
+    "servicers": [{"servicer_id": "SERVICER-D1", "orbit": {"reference": "earth_circular", "semimajor_axis_km": 7078.137, "inclination_rad": 1.7017, "raan_rad": 3.6, "epoch_s": 0}, "dry_mass_kg": 420, "propellant_kg": 110, "maximum_payload_kg": 0, "capabilities": ["capture", "orbit-lowering", "deorbit"], "available_from_s": 2678400, "propulsion": {"type": "low_thrust", "isp_s": 2200, "thrust_n": 0.04}}],
+    "depots": [], "existing_commitments": []
+  },
+  "launch_access": {"model_id": "public-launch-access-v1", "model_type": "joint_generative_calendar", "information_cutoff_s": 0, "horizon_end_s": 44582400, "generated_scenarios": 500, "marks": ["launch_time", "site", "provider", "vehicle", "target_orbit", "purchasable_capacity", "price", "booking_deadline"], "capacity_evidence_allowed": ["A", "B", "C", "D"], "random_seed": 24019},
+  "decision_policy": {"policy_id": "POLICY-DEORBIT-001", "decisions": {"accept_sla": {"stage": "offer", "required": true}, "assign_servicer": {"stage": "offer", "required": true}, "reserve_launch": {"stage": "booking"}, "select_route": {"stage": "operations"}}, "freeze_rules": [{"decision": "assign_servicer", "relative_to": "offer_time", "offset_s": 0}]},
+  "models": {"transfer": "edelbaum-j2-v1", "planning": "two-stage-sla-v1", "service": "deorbit-v1"},
+  "metadata": {"title": "End-of-life deorbit demonstration", "tags": ["deorbit", "LEO"]}
+}

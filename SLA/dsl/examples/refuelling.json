@@ -1,0 +1,24 @@
+{
+  "dsl_version": "0.1",
+  "problem_id": "DEMO-REFUEL-001",
+  "as_of": "2030-01-01T00:00:00Z",
+  "sla": {
+    "sla_id": "SLA-REFUEL-001", "customer_id": "CUSTOMER-A",
+    "service": {"type": "commodity_delivery", "commodity": "xenon", "quantity": {"value": 80, "unit": "kg"}, "nominal_service_duration_s": 86400, "required_capabilities": ["fluid_transfer"]},
+    "client": {"client_id": "SAT-042", "target_orbit": {"reference": "earth_circular", "semimajor_axis_km": 6928.137, "inclination_rad": 0.925, "raan_rad": 1.42, "epoch_s": 0}},
+    "service_window": {"earliest_s": 5097600, "latest_s": 15552000},
+    "success": {"all": [{"metric": "delivered_quantity", "operator": ">=", "value": 80, "unit": "kg"}, {"metric": "completion_time_s", "operator": "<=", "value": 15552000, "unit": "s"}]},
+    "reliability": {"measure": "on_time_completion_probability", "minimum": 0.95, "scenario_model": "public-launch-access-v1"},
+    "commercial_terms": {"revenue": {"value": 15000000, "currency": "EUR"}, "late_penalty_per_second": {"value": 1.1574074074074074, "currency": "EUR"}, "failure_penalty": {"value": 8000000, "currency": "EUR"}}
+  },
+  "provider_state": {
+    "state_id": "STATE-2030-01-01", "observation_time_s": 0,
+    "servicers": [{"servicer_id": "SERVICER-1", "orbit": {"reference": "earth_circular", "semimajor_axis_km": 6978.137, "inclination_rad": 0.925, "raan_rad": 1.1, "epoch_s": 0}, "dry_mass_kg": 260, "propellant_kg": 75, "maximum_payload_kg": 100, "capabilities": ["fluid_transfer", "commodity_delivery"], "available_from_s": 0, "propulsion": {"type": "low_thrust", "isp_s": 2800, "thrust_n": 0.01}}],
+    "depots": [{"depot_id": "DEPOT-1", "orbit": {"reference": "earth_circular", "semimajor_axis_km": 6978.137, "inclination_rad": 0.925, "raan_rad": 0.8, "epoch_s": 0}, "commissioned_from_s": -31536000, "inventory": [{"commodity": "xenon", "quantity": {"value": 120, "unit": "kg"}, "reserved": {"value": 20, "unit": "kg"}}]}],
+    "existing_commitments": []
+  },
+  "launch_access": {"model_id": "public-launch-access-v1", "model_type": "joint_generative_calendar", "information_cutoff_s": 0, "horizon_end_s": 63072000, "generated_scenarios": 500, "marks": ["launch_time", "site", "provider", "vehicle", "target_orbit", "purchasable_capacity", "price", "booking_deadline"], "capacity_evidence_allowed": ["A", "B", "C", "D"], "random_seed": 24017},
+  "decision_policy": {"policy_id": "POLICY-REFUEL-001", "decisions": {"accept_sla": {"stage": "offer", "required": true}, "reserve_inventory": {"stage": "offer", "required": true}, "reserve_launch": {"stage": "booking"}, "assign_servicer": {"stage": "post_launch_realisation"}, "select_route": {"stage": "operations"}}, "freeze_rules": [{"decision": "reserve_launch", "relative_to": "booking_deadline", "offset_s": 0}]},
+  "models": {"transfer": "edelbaum-j2-v1", "planning": "two-stage-sla-v1", "service": "commodity-delivery-v1"},
+  "metadata": {"title": "LEO xenon refuelling demonstration", "tags": ["refuel", "LEO", "launch-uncertainty"]}
+}

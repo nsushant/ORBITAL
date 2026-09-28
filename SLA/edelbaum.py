@@ -1,0 +1,639 @@
+"""
+Fast analytical transfer model: Edelbaum arcs either side of a ballistic J2 coast.
+
+A transfer runs in three phases. A first low-thrust arc takes the servicer from
+its orbit (a0, I0, RAAN0) to a drift orbit (a_d, I_d). The servicer then coasts,
+and the RAAN separation closes under J2 nodal regression. A second arc puts it
+on the target orbit (af, If). Only the two arcs cost propellant; the coast buys
+RAAN for free, which is what makes the drift orbit worth searching for.
+
+Arc cost is Edelbaum's relation for low-thrust transfer between circular orbits
+with a plane change. Written in the velocity plane
+
+    (x, y) = V * (cos(pi/2 * I), sin(pi/2 * I)),     V = sqrt(mu / a)
+
+an arc is a straight chord and its delta-V is the Euclidean length of that
+chord, which is exactly
+
+    dV = sqrt(V1^2 + V2^2 - 2 V1 V2 cos(pi/2 * dI)).
+
+The factor pi/2 on the inclination term presumes the optimal yaw programme over
+the arc, so no explicit steering law is needed.
+
+Choosing the drift orbit is therefore a search over points in the velocity
+plane. Candidates are taken along the chord joining the two endpoints (no free
+RAAN, cheapest arcs) and on ellipses with the endpoints as foci (progressively
+more delta-V spent to reach a faster-drifting orbit). A candidate is admissible
+only if the RAAN accumulated over the two arcs plus the coast closes the gap to
+the target, modulo 2*pi. Among admissible candidates the cheapest is returned.
+
+This is the model the optimiser runs on; `oos.lu` is the reference it is
+validated against.
+
+Units: km, s, kg, rad. Thrust is in kg*km/s^2, so 1 N = 1e-3.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+try:
+    from numba import njit
+except ImportError:  # dependency-free MVP fallback
+    from .optimization.compat import njit
+
+from .constants import G0, J2, MU, R_E
+from .guards import A_FLOOR, MASS_FLOOR, V2_FLOOR, den
+
+# State vector layout, used throughout: [a, incl, raan, mass, isp, thrust].
+A, INCL, RAAN, MASS, ISP, THRUST = 0, 1, 2, 3, 4, 5
+
+_GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(16)
+
+# Sentinel for "no per-entry RAAN gaps given"; numba needs a concrete array type.
+EMPTY = np.empty(0)
+
+# A drift orbit has to be an orbit. The growth ladder is walked outward until a
+# ring closes, so an entry that never closes walks it all the way to the top,
+# and the far rungs are not physical. Two distinct failures live out there, at
+# two different growths, and both are rejected by bounding the drift orbit:
+#
+#   growth ~ |centre|   The ring is an ellipse with the two velocity-plane
+#                       endpoints as foci, centred at their midpoint, which sits
+#                       about 7.6 km/s from the origin for every pair in this
+#                       population. When the semi-major axis c + growth reaches
+#                       that distance the ring passes through the origin, where
+#                       a = MU / v^2 diverges -- measured, 6e30 km.
+#
+#   growth >> |centre|  The ring becomes a huge near-circle: at the old ladder
+#                       top of 4096 km/s every point sits at |v| ~ 4096 km/s, so
+#                       the drift orbit has a = 24 m and the arc costs ~4000
+#                       km/s. The rocket equation then drives the servicer's
+#                       mass to 1e-163 on the first arc, and the quadrature over
+#                       the second multiplies it by another exp(-379), which
+#                       underflows to exactly zero. Dividing thrust by that mass
+#                       to get acceleration raises ZeroDivisionError.
+#
+# Neither has anything to do with the pair's geometry -- what triggers them is
+# an entry that never closes, whatever its inclination or altitude separation.
+# In a serial call the second surfaces as an exception; inside the parallel
+# build it surfaced as a silently all-NaN table, which is the worse symptom.
+#
+# The bounds cost nothing real: delta-V on a ring is 2*(c + growth), so a growth
+# of even 1 km/s already costs 2 km/s, four times the servicer's whole budget.
+A_DRIFT_MIN = R_E + 150.0     # km
+A_DRIFT_MAX = 10.0 * R_E      # km
+
+# Ceiling on the ring search. Circular-orbit speeds here are about 7.6 km/s, so
+# a growth of 8 km/s already carries the ring past the origin and out to drift
+# orbits inside the Earth. It is also 32 times the largest growth the servicer
+# could pay for, so nothing reachable is lost.
+MAX_GROWTH = 8.0              # km/s
+
+# Floor of the shared ladder. 1e-4 km/s of growth is 0.2 m/s of delta-V, an
+# order of magnitude below the cheapest transfer the table contains.
+MIN_GROWTH = 1e-4             # km/s
+
+
+@njit(cache=True)
+def to_velocity_plane(a, incl):
+    v = np.sqrt(MU / a)
+    return v * np.cos(0.5 * np.pi * incl), v * np.sin(0.5 * np.pi * incl)
+
+
+@njit(cache=True)
+def from_velocity_plane(x, y):
+    v2 = x * x + y * y
+    if v2 <= 0.0:                      # the origin maps to an infinite orbit
+        return np.inf, 0.0
+    a = MU / den(v2, V2_FLOOR)
+    incl = 2.0 / np.pi * np.arctan2(y, x)
+    return a, incl
+
+
+@njit(cache=True)
+def wrap_pi(x):
+    """Wrap an angle onto (-pi, pi]."""
+    return x - 2.0 * np.pi * np.round(x / (2.0 * np.pi))
+
+
+@njit(cache=True)
+def j2_raan_rate(a, incl):
+    """Secular J2 nodal regression rate [rad/s] for a circular orbit."""
+    a_g = den(a, A_FLOOR)
+    n = np.sqrt(MU / (a_g * a_g * a_g))
+    return -1.5 * J2 * (R_E / a_g) ** 2 * n * np.cos(incl)
+
+
+@njit(cache=True)
+def arc_cost(a0, incl0, af, inclf, mass, isp, thrust):
+    """Edelbaum arc: delta-V [km/s], burn duration [s], and final mass [kg]."""
+    x0, y0 = to_velocity_plane(a0, incl0)
+    xf, yf = to_velocity_plane(af, inclf)
+    dv = np.hypot(xf - x0, yf - y0)
+    v_exhaust = den(isp * G0)
+    duration = v_exhaust * (mass / den(thrust)) * (1.0 - np.exp(-dv / v_exhaust))
+    return dv, duration, mass * np.exp(-dv / v_exhaust)
+
+
+@njit(cache=True)
+def _raan_during_arc(a0, incl0, mass, isp, thrust, x0, y0, xf, yf, dv):
+    """RAAN accumulated while thrusting along an arc [rad].
+
+    The arc is parameterised by expended delta-V s in [0, dV]. Along it
+    dOmega/ds = Omega_dot(a(s), I(s)) / f(s), with f = thrust/m(s) the current
+    acceleration. Integrated by 16-point Gauss-Legendre, which is exact enough
+    here because the integrand is smooth in s.
+    """
+    if dv <= 1e-15:
+        return 0.0
+    v_exhaust = den(isp * G0)
+    total = 0.0
+    for k in range(_GL_NODES.shape[0]):
+        s = dv * 0.5 * (_GL_NODES[k] + 1.0)
+        weight = dv * 0.5 * _GL_WEIGHTS[k]
+        frac = s / dv
+        x = x0 + frac * (xf - x0)
+        y = y0 + frac * (yf - y0)
+        a_s, incl_s = from_velocity_plane(x, y)
+        # The mass here is the rocket equation's, and on a pathological arc it
+        # underflows to exactly zero. This is the division that used to raise.
+        accel = thrust / den(mass * np.exp(-s / v_exhaust), MASS_FLOOR)
+        total += j2_raan_rate(a_s, incl_s) / accel * weight
+    return total
+
+
+@njit(cache=True)
+def ring_point(growth, x1, y1, x2, y2, t):
+    """One point on a candidate ring, at ring parameter t.
+
+    `growth` = 0 is the chord joining the endpoints, parameterised by t in
+    [0, 1]. `growth` > 0 is an ellipse with the endpoints as foci, parameterised
+    by t in [0, 2*pi].
+    """
+    if growth == 0.0:
+        return (1.0 - t) * x1 + t * x2, (1.0 - t) * y1 + t * y2
+
+    cx, cy = 0.5 * (x1 + x2), 0.5 * (y1 + y2)
+    dx, dy = x2 - x1, y2 - y1
+    d = np.hypot(dx, dy)
+    # Endpoints differing only in RAAN share a velocity-plane point. Grow a
+    # circle about it rather than a degenerate ellipse.
+    if d < 1e-12:
+        ux, uy, c = 1.0, 0.0, 0.0
+    else:
+        ux, uy, c = dx / d, dy / d, 0.5 * d
+    px, py = -uy, ux
+
+    semi_major = c + growth
+    semi_minor = np.sqrt(max(semi_major * semi_major - c * c, 0.0))
+    return (cx + semi_major * np.cos(t) * ux + semi_minor * np.sin(t) * px,
+            cy + semi_major * np.cos(t) * uy + semi_minor * np.sin(t) * py)
+
+
+@njit(cache=True)
+def ellipse_points(growth, x1, y1, x2, y2, num_points):
+    """`num_points` samples of the ring, for inspection and plotting."""
+    out = np.empty((num_points, 2))
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
+    for k in range(num_points):
+        t = 0.0 if num_points == 1 else t_max * k / (num_points - 1.0)
+        out[k, 0], out[k, 1] = ring_point(growth, x1, y1, x2, y2, t)
+    return out
+
+
+@njit(cache=True)
+def drift_orbit_residual(xd, yd, state1, state2, tof, d_raan):
+    """RAAN closure residual for a drift orbit, and the coast it implies.
+
+    Returns (residual [rad], coast duration [s]). The residual is NaN when the
+    two arcs do not fit inside the time of flight, which is the one hard
+    feasibility limit; everything else is a matter of hitting the right node.
+    """
+    a_d, incl_d = from_velocity_plane(xd, yd)
+
+    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
+    dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
+                                state1[MASS], state1[ISP], state1[THRUST])
+    if tof - dt1 <= 0.0:
+        return np.nan, np.nan
+    raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
+                             state1[ISP], state1[THRUST], x1, y1, xd, yd, dv1)
+
+    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    dv2, dt2, _ = arc_cost(a_d, incl_d, state2[A], state2[INCL],
+                           mass_d, state1[ISP], state1[THRUST])
+    raan2 = _raan_during_arc(a_d, incl_d, mass_d, state1[ISP], state1[THRUST],
+                             xd, yd, x2, y2, dv2)
+
+    t_coast = tof - dt1 - dt2
+    if t_coast < 0.0:
+        return np.nan, np.nan
+
+    delivered = raan1 + j2_raan_rate(a_d, incl_d) * t_coast + raan2
+    return wrap_pi(delivered - d_raan), t_coast
+
+
+@njit(cache=True)
+def ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan):
+    """Arc quantities for each sampled drift orbit on a ring.
+
+    None of this depends on the time of flight - only the coast between the two
+    arcs does - so a ring is evaluated once and then tested against every time
+    of flight. Columns: total delta-V, first-arc duration, both-arc duration,
+    RAAN accrued while thrusting, and the drift orbit's nodal rate.
+    """
+    out = np.empty((n_scan + 1, 5))
+    xs1, ys1 = to_velocity_plane(state1[A], state1[INCL])
+    xs2, ys2 = to_velocity_plane(state2[A], state2[INCL])
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
+
+    for k in range(n_scan + 1):
+        t = t_max * k / n_scan
+        xd, yd = ring_point(growth, x1, y1, x2, y2, t)
+        a_d, incl_d = from_velocity_plane(xd, yd)
+
+        if a_d < A_DRIFT_MIN or a_d > A_DRIFT_MAX:
+            out[k, 0] = np.nan
+            out[k, 1] = np.nan
+            out[k, 2] = np.nan
+            out[k, 3] = np.nan
+            out[k, 4] = np.nan
+            continue
+
+        dv1, dt1, mass_d = arc_cost(state1[A], state1[INCL], a_d, incl_d,
+                                    state1[MASS], state1[ISP], state1[THRUST])
+        raan1 = _raan_during_arc(state1[A], state1[INCL], state1[MASS],
+                                 state1[ISP], state1[THRUST], xs1, ys1, xd, yd, dv1)
+        dv2, dt2, _ = arc_cost(a_d, incl_d, state2[A], state2[INCL],
+                               mass_d, state1[ISP], state1[THRUST])
+        raan2 = _raan_during_arc(a_d, incl_d, mass_d, state1[ISP], state1[THRUST],
+                                 xd, yd, xs2, ys2, dv2)
+
+        out[k, 0] = dv1 + dv2
+        out[k, 1] = dt1
+        out[k, 2] = dt1 + dt2
+        out[k, 3] = raan1 + raan2
+        out[k, 4] = j2_raan_rate(a_d, incl_d)
+    return out
+
+
+@njit(cache=True)
+def _residual_from_bundle(bundles, k, tof, d_raan):
+    """Closure residual of sampled drift orbit k at this time of flight."""
+    if tof - bundles[k, 1] <= 0.0:      # the first arc alone overruns the horizon
+        return np.nan
+    t_coast = tof - bundles[k, 2]
+    if t_coast < 0.0:
+        return np.nan
+    return wrap_pi(bundles[k, 3] + bundles[k, 4] * t_coast - d_raan)
+
+
+@njit(cache=True)
+def _closes_from_bundles(bundles, growth, x1, y1, x2, y2, state1, state2,
+                         tof, d_raan, n_scan):
+    """Does some drift orbit on this ring close RAAN exactly at this horizon?
+
+    Sign changes of the residual bracket a root, except where the residual steps
+    by 2*pi, which is the wrap rather than a crossing. Brackets are bisected on
+    the ring parameter, so closure is solved for rather than tested against a
+    tolerance.
+    """
+    t_max = 1.0 if growth == 0.0 else 2.0 * np.pi
+    prev_r = np.nan
+    prev_t = 0.0
+    for k in range(n_scan + 1):
+        t = t_max * k / n_scan
+        r = _residual_from_bundle(bundles, k, tof, d_raan)
+
+        if not np.isnan(r) and not np.isnan(prev_r):
+            if r == 0.0:
+                return True
+            if prev_r * r < 0.0 and np.abs(r - prev_r) < np.pi:
+                lo_t, lo_r = prev_t, prev_r
+                hi_t = t
+                converged = True
+                for _ in range(60):
+                    mid_t = 0.5 * (lo_t + hi_t)
+                    mx, my = ring_point(growth, x1, y1, x2, y2, mid_t)
+                    mr, _ = drift_orbit_residual(mx, my, state1, state2, tof, d_raan)
+                    if np.isnan(mr):
+                        converged = False
+                        break
+                    if (mr < 0.0) == (lo_r < 0.0):
+                        lo_t, lo_r = mid_t, mr
+                    else:
+                        hi_t = mid_t
+                if converged:
+                    return True
+        prev_r, prev_t = r, t
+    return False
+
+
+@njit(cache=True)
+def ring_closes(growth, x1, y1, x2, y2, state1, state2, tof, d_raan, n_scan):
+    """Single-horizon wrapper, kept for tests and for one-off queries."""
+    bundles = ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan)
+    return _closes_from_bundles(bundles, growth, x1, y1, x2, y2, state1, state2,
+                                tof, d_raan, n_scan)
+
+
+@njit(cache=True)
+def transfer_cost(state1, state2, tofs, d_raans=EMPTY, n_scan=180, n_growth=48,
+                  max_growth=MAX_GROWTH, growth_rtol=1e-3):
+    """Minimum delta-V [km/s] for one orbit pair over several times of flight.
+
+    Every point on a ring costs the same: the ring is an ellipse with the two
+    endpoints as foci, and the two arcs are the distances from the point to each
+    focus, so their sum is exactly 2*(c + growth). The transfer delta-V depends
+    only on which ring the drift orbit lies on, so the search is for the
+    *smallest* ring carrying a drift orbit that closes RAAN - the method
+    Section 3.2.4 describes. The chord (growth = 0) is the direct transfer.
+
+    Feasibility is not monotone in growth: too small a ring cannot buy enough
+    nodal drift, too large a one spends so long thrusting that the arcs no
+    longer fit the horizon. So the ladder is scanned outward for the first ring
+    that closes, then bisected against the last that did not.
+
+    Each ring is evaluated once and tested against every time of flight, since
+    the arcs do not depend on the horizon.
+
+    `tofs` in seconds. States are [a, incl, raan, mass, isp, thrust].
+    `d_raans`, if given, is the required RAAN change for each entry of `tofs`;
+    it defaults to `state2[RAAN] - state1[RAAN]` for all of them. A cost table
+    needs one entry per (departure epoch, arrival epoch), and the nodes of both
+    objects have drifted by different amounts at each departure, so the required
+    RAAN change differs entry by entry while the orbits do not. The ring bundles
+    depend only on the orbits, so passing every entry for an object pair in one
+    call shares that work across all of them.
+    NaN where no drift orbit closes RAAN within the time of flight.
+    """
+    n_tofs = tofs.shape[0]
+    best = np.full(n_tofs, np.nan)
+    per_entry = d_raans.shape[0] == n_tofs
+    default_raan = state2[RAAN] - state1[RAAN]
+
+    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
+    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    half_separation = 0.5 * np.hypot(x2 - x1, y2 - y1)
+
+    ladder = 10.0 ** np.linspace(-2.0, np.log10(max_growth), n_growth)
+
+    # Largest growth known not to close, and smallest known to close, per horizon.
+    lo = np.zeros(n_tofs)
+    hi = np.full(n_tofs, -1.0)
+    resolved = np.zeros(n_tofs, dtype=np.bool_)
+
+    chord = ring_bundles(0.0, x1, y1, x2, y2, state1, state2, n_scan)
+    for k in range(n_tofs):
+        gap = d_raans[k] if per_entry else default_raan
+        if _closes_from_bundles(chord, 0.0, x1, y1, x2, y2, state1, state2,
+                                tofs[k], gap, n_scan):
+            best[k] = 2.0 * half_separation      # the direct transfer already closes
+            resolved[k] = True
+
+    for g in range(ladder.shape[0]):
+        if np.all(resolved):
+            break
+        bundles = ring_bundles(ladder[g], x1, y1, x2, y2, state1, state2, n_scan)
+        for k in range(n_tofs):
+            if resolved[k] or hi[k] > 0.0:
+                continue
+            gap = d_raans[k] if per_entry else default_raan
+            if _closes_from_bundles(bundles, ladder[g], x1, y1, x2, y2, state1,
+                                    state2, tofs[k], gap, n_scan):
+                hi[k] = ladder[g]
+            else:
+                lo[k] = ladder[g]
+
+    for k in range(n_tofs):
+        if resolved[k] or hi[k] < 0.0:
+            continue
+        gap = d_raans[k] if per_entry else default_raan
+        lo_k, hi_k = lo[k], hi[k]
+        # growth_rtol <= 0 skips refinement, leaving the ladder to set the
+        # resolution. The iteration cap is a guard, not a tuning knob: once the
+        # midpoint rounds to an endpoint the interval stops shrinking, and a
+        # tolerance of zero would otherwise spin forever.
+        refinements = 0
+        while (growth_rtol > 0.0 and hi_k - lo_k > growth_rtol * hi_k
+               and refinements < 200):
+            refinements += 1
+            mid = 0.5 * (lo_k + hi_k)
+            bundles = ring_bundles(mid, x1, y1, x2, y2, state1, state2, n_scan)
+            if _closes_from_bundles(bundles, mid, x1, y1, x2, y2, state1, state2,
+                                    tofs[k], gap, n_scan):
+                hi_k = mid
+            else:
+                lo_k = mid
+        best[k] = 2.0 * (half_separation + hi_k)
+
+    return best
+
+
+# ---------------------------------------------------------------------------
+# Shared-ladder path.
+#
+# `transfer_cost` above refines each entry's growth bracket on its own, and
+# every bisection step rebuilds the 181-sample bundle from scratch. Measured on
+# one object pair over the full 676-entry epoch grid, that is 8617
+# bundle-equivalents against a shared ladder of 48 -- 99.4 % of the runtime, and
+# the reason a full cost table took hours. The functions below compute each
+# ring once and test every entry against it.
+#
+# The trick is to stop asking "does this ring close *this* required RAAN
+# change" and instead ask "which required RAAN changes does this ring close at
+# all". For a fixed ring and horizon the closure function
+#
+#     G(k) = raan accrued while thrusting + drift rate * coast time
+#
+# depends only on the sample index k, not on what the entry needs. Over a
+# maximal run of samples that are feasible and do not jump, G is a continuous
+# polyline, so the set of RAAN changes it delivers is exactly the interval
+# [min G, max G] over that run. Testing an entry becomes a couple of
+# comparisons against a handful of such arcs.
+#
+# This is more rigorous than the bracket-then-bisect it replaces, not less: a
+# required change inside an arc has a root by the intermediate value theorem,
+# where the reference had to confirm the bracket numerically and gave up on it
+# whenever a midpoint landed in an infeasible pocket.
+
+
+@njit(cache=True)
+def closing_arcs(bundles, tof, n_scan, out_lo, out_hi):
+    """RAAN changes this ring delivers at this horizon, as arcs.
+
+    Writes into `out_lo` / `out_hi` and returns how many arcs were written.
+    Each arc is the image of the closure function over one maximal run of
+    samples that are feasible and consecutive without a jump. Runs of a single
+    sample deliver a point rather than an interval and are dropped, matching the
+    reference, which needs a sign change across two samples.
+    """
+    n_arc = 0
+    in_run = False
+    run_lo = 0.0
+    run_hi = 0.0
+    run_len = 0
+    prev_g = 0.0
+
+    for k in range(n_scan + 1):
+        # Feasibility exactly as _residual_from_bundle tests it.
+        if tof - bundles[k, 1] <= 0.0 or tof - bundles[k, 2] < 0.0:
+            ok = False
+            g = 0.0
+        elif np.isnan(bundles[k, 3]):        # the ring point was not an orbit
+            ok = False
+            g = 0.0
+        else:
+            ok = True
+            g = bundles[k, 3] + bundles[k, 4] * (tof - bundles[k, 2])
+
+        # A jump larger than pi between neighbours means the sampling is too
+        # coarse to claim continuity across it, so the run is cut there. This is
+        # the reference's `abs(r - prev_r) < pi` guard, applied to G itself.
+        joins = ok and in_run and abs(g - prev_g) < np.pi
+
+        if joins:
+            if g < run_lo:
+                run_lo = g
+            if g > run_hi:
+                run_hi = g
+            run_len += 1
+        else:
+            if in_run and run_len > 1:
+                out_lo[n_arc] = run_lo
+                out_hi[n_arc] = run_hi
+                n_arc += 1
+            if ok:
+                in_run = True
+                run_lo = g
+                run_hi = g
+                run_len = 1
+            else:
+                in_run = False
+                run_len = 0
+
+        prev_g = g
+
+    if in_run and run_len > 1:
+        out_lo[n_arc] = run_lo
+        out_hi[n_arc] = run_hi
+        n_arc += 1
+    return n_arc
+
+
+@njit(cache=True)
+def arc_clearance(out_lo, out_hi, n_arc, d_raan):
+    """Signed angular distance from a required RAAN change to the arc set.
+
+    Negative inside an arc, positive outside, zero on a boundary, and
+    continuous in the ring's growth. That continuity is what lets the growth at
+    which an entry first closes be interpolated between two ladder rungs
+    instead of bisected for.
+    """
+    two_pi = 2.0 * np.pi
+    best = 1e300
+    for m in range(n_arc):
+        width = out_hi[m] - out_lo[m]
+        if width >= two_pi:
+            return -np.pi
+        u = (d_raan - out_lo[m]) % two_pi
+        if u <= width:
+            inside = -min(u, width - u)
+            if inside < best:
+                best = inside
+        else:
+            outside = min(u - width, two_pi - u)
+            if outside < best:
+                best = outside
+    return best
+
+
+@njit(cache=True, parallel=False)
+def transfer_cost_grid(state1, state2, tof_list, d_raans, n_scan=180,
+                       n_ladder=1200, max_growth=MAX_GROWTH,
+                       min_growth=MIN_GROWTH):
+    """Minimum delta-V [km/s] over a grid of horizons and required RAAN changes.
+
+    `d_raans` is (n_row, n_tof); row r column q needs `d_raans[r, q]` of nodal
+    change within `tof_list[q]`. Rows are whatever the caller wants to batch --
+    departure epochs for one object pair, or every member pair of a plane group,
+    since the ring geometry depends on the two orbits alone and the epochs enter
+    only through the required RAAN change.
+
+    Returns (n_row, n_tof), NaN where no drift orbit closes the node in time.
+
+    Accuracy is set by the ladder alone: the delta-V returned is the first rung
+    that closes, so it overstates the true optimum by at most one rung spacing
+    and never understates it. At the default 1200 rungs over
+    [1e-4, 8] km/s the spacing is 0.95 %, so every entry is within 0.95 % and on
+    the conservative side.
+    """
+    n_row = d_raans.shape[0]
+    n_tof = tof_list.shape[0]
+    best = np.full((n_row, n_tof), np.nan)
+    resolved = np.zeros((n_row, n_tof), dtype=np.bool_)
+
+    x1, y1 = to_velocity_plane(state1[A], state1[INCL])
+    x2, y2 = to_velocity_plane(state2[A], state2[INCL])
+    half_separation = 0.5 * np.hypot(x2 - x1, y2 - y1)
+
+    # Geometric, so the *relative* delta-V error is bounded by the spacing
+    # whatever the chord length: delta-V is 2(c + g) and a step is rho*g, so the
+    # relative error is rho*g/(c + g) <= rho. The floor matters as much as the
+    # ceiling. An earlier version started at 1e-2 km/s, which is 20 m/s of
+    # delta-V, and reported that for transfers whose true cost is a couple of
+    # m/s -- an 800 % error on the cheapest entries in the table, which are
+    # exactly the ones the optimiser cares about.
+    ladder = np.empty(n_ladder + 1)
+    ladder[0] = 0.0                       # the chord: the direct transfer
+    lo_exp = np.log10(min_growth)
+    step = (np.log10(max_growth) - lo_exp) / (n_ladder - 1.0)
+    for g in range(n_ladder):
+        ladder[g + 1] = 10.0 ** (lo_exp + g * step)
+
+    lo_buf = np.empty(n_scan + 2)
+    hi_buf = np.empty(n_scan + 2)
+    n_left = n_row * n_tof
+
+    for g in range(ladder.shape[0]):
+        if n_left == 0:
+            break
+        growth = ladder[g]
+        bundles = ring_bundles(growth, x1, y1, x2, y2, state1, state2, n_scan)
+
+        for q in range(n_tof):
+            n_arc = closing_arcs(bundles, tof_list[q], n_scan, lo_buf, hi_buf)
+            for r in range(n_row):
+                if resolved[r, q]:
+                    continue
+                c = arc_clearance(lo_buf, hi_buf, n_arc, d_raans[r, q])
+                if c <= 0.0:
+                    # The rung itself, not an interpolation back towards the
+                    # previous one. Interpolating on the clearance looked
+                    # attractive and was measurably wrong in the tail: the
+                    # clearance is not linear in growth once a point is inside
+                    # an arc, and 77 % of the disagreements it produced were it
+                    # crediting a cheaper transfer than a fine-ladder reference
+                    # allows. Taking the rung makes the error one-sided and
+                    # bounded by the ladder spacing, and errs towards
+                    # overstating delta-V, which is the direction Section 3.2.6
+                    # already claims for this model.
+                    best[r, q] = 2.0 * (half_separation + growth)
+                    resolved[r, q] = True
+                    n_left -= 1
+
+    return best
+
+
+def transfer_dv(a0, incl0, raan0, af, inclf, raanf, tof_s,
+                mass=335.0, isp=2800.0, thrust=1e-5, **kwargs):
+    """Convenience single-transfer wrapper. Returns delta-V [m/s], or None.
+
+    `tof_s` is seconds relative to the caller's epoch. Defaults are the Otter-class
+    servicer of the paper: 335 kg, Isp 2800 s,
+    10 mN (1e-5 kg*km/s^2).
+    """
+    s1 = np.array([a0, incl0, raan0, mass, isp, thrust])
+    s2 = np.array([af, inclf, raanf, mass, isp, thrust])
+    dv = transfer_cost(s1, s2, np.array([tof_s]), **kwargs)[0]
+    return None if np.isnan(dv) else dv * 1000.0

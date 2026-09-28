@@ -1,0 +1,21 @@
+{
+  "dsl_version": "0.1", "problem_id": "DEMO-REPAIR-001", "as_of": "2030-01-01T00:00:00Z",
+  "sla": {
+    "sla_id": "SLA-REPAIR-001", "customer_id": "CUSTOMER-B",
+    "service": {"type": "repair", "task_code": "replace-reaction-wheel", "parts": [{"commodity": "reaction-wheel-module", "quantity": {"value": 1, "unit": "item"}}], "required_capabilities": ["robotic-replacement"], "nominal_service_duration_s": 259200},
+    "client": {"client_id": "SAT-117", "target_orbit": {"reference": "earth_circular", "semimajor_axis_km": 7078.137, "inclination_rad": 1.7104, "raan_rad": 2.1}},
+    "service_window": {"earliest_s": 2678400, "latest_s": 10368000},
+    "success": {"all": [{"metric": "task_completed", "operator": "==", "value": true}, {"metric": "completion_time_s", "operator": "<=", "value": 10368000, "unit": "s"}]},
+    "reliability": {"measure": "service_success_probability", "minimum": 0.9, "scenario_model": "public-launch-access-v1"},
+    "commercial_terms": {"revenue": {"value": 18000000, "currency": "EUR"}, "late_penalty_per_second": {"value": 1.7361111111111112, "currency": "EUR"}, "failure_penalty": {"value": 10000000, "currency": "EUR"}}
+  },
+  "provider_state": {
+    "state_id": "STATE-2030-01-01", "observation_time_s": 0,
+    "servicers": [{"servicer_id": "SERVICER-R1", "orbit": {"reference": "earth_circular", "semimajor_axis_km": 6978.137, "inclination_rad": 1.7104, "raan_rad": 1.7, "epoch_s": 0}, "dry_mass_kg": 310, "propellant_kg": 65, "maximum_payload_kg": 60, "capabilities": ["robotic-replacement", "repair"], "available_from_s": 0, "propulsion": {"type": "low_thrust", "isp_s": 2500, "thrust_n": 0.02}}],
+    "depots": [{"depot_id": "DEPOT-R", "orbit": {"reference": "earth_circular", "semimajor_axis_km": 6978.137, "inclination_rad": 1.7104, "raan_rad": 1.6, "epoch_s": 0}, "commissioned_from_s": -18489600, "inventory": [{"commodity": "reaction-wheel-module", "quantity": {"value": 2, "unit": "item"}}]}], "existing_commitments": []
+  },
+  "launch_access": {"model_id": "public-launch-access-v1", "model_type": "joint_generative_calendar", "information_cutoff_s": 0, "horizon_end_s": 31536000, "generated_scenarios": 500, "marks": ["launch_time", "site", "provider", "vehicle", "target_orbit", "purchasable_capacity", "price", "booking_deadline"], "capacity_evidence_allowed": ["A", "B", "C"], "random_seed": 24018},
+  "decision_policy": {"policy_id": "POLICY-REPAIR-001", "decisions": {"accept_sla": {"stage": "offer", "required": true}, "reserve_part": {"stage": "offer", "required": true}, "reserve_launch": {"stage": "booking"}, "assign_servicer": {"stage": "post_launch_realisation"}}, "freeze_rules": [{"decision": "reserve_launch", "relative_to": "booking_deadline", "offset_s": 0}]},
+  "models": {"transfer": "edelbaum-j2-v1", "planning": "two-stage-sla-v1", "service": "repair-v1"},
+  "metadata": {"title": "Reaction-wheel replacement demonstration", "tags": ["repair", "LEO"]}
+}

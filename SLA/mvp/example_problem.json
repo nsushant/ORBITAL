@@ -1,0 +1,135 @@
+{
+  "problem_id": "ROLLING-DEMO-001",
+  "as_of": "2030-01-01T00:00:00Z",
+  "mdls_iterations": 30,
+  "delta_v_cost_per_m_s": 1000,
+  "current_state": {
+    "servicer_count": 1,
+    "inventory": {
+      "xenon_kg": 120,
+      "repair_kit": 1
+    },
+    "dv_budget_m_s": 2500,
+    "depot_orbit": {
+      "semimajor_axis_km": 6978.137,
+      "inclination_rad": 0.925,
+      "raan_rad": 0.8
+    }
+  },
+  "accepted_slas": [
+    {
+      "sla_id": "COMMITTED-REFUEL-01",
+      "target_asset_id": "SAT-042",
+      "target_orbit": {
+        "semimajor_axis_km": 6928.137,
+        "inclination_rad": 0.925,
+        "raan_rad": 1.42
+      },
+      "deadline_s": 15552000,
+      "service_duration_s": 2592000,
+      "inventory": {
+        "xenon_kg": 80
+      },
+      "required_reliability": 0.95,
+      "failure_penalty": 8000000,
+      "revenue": 0
+    }
+  ],
+  "candidate_slas": [
+    {
+      "sla_id": "CANDIDATE-REFUEL-02",
+      "target_asset_id": "SAT-108",
+      "target_orbit": {
+        "semimajor_axis_km": 7050,
+        "inclination_rad": 0.925,
+        "raan_rad": 1.42
+      },
+      "deadline_s": 31104000,
+      "service_duration_s": 3456000,
+      "inventory": {
+        "xenon_kg": 100
+      },
+      "required_reliability": 0.85,
+      "failure_penalty": 6000000,
+      "revenue": 24000000
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "NOMINAL",
+      "probability": 0.7,
+      "servicer_availability": 1.0,
+      "inventory_multiplier": 1.0,
+      "launch_outcomes": {
+        "RESUPPLY-LAUNCH": true
+      }
+    },
+    {
+      "scenario_id": "LAUNCH_DELAY_OR_CANCELLATION",
+      "probability": 0.1,
+      "servicer_availability": 1.0,
+      "inventory_multiplier": 1.0,
+      "launch_outcomes": {
+        "RESUPPLY-LAUNCH": false
+      }
+    },
+    {
+      "scenario_id": "SERVICER_OUTAGE",
+      "probability": 0.2,
+      "servicer_availability": 0.75,
+      "inventory_multiplier": 1.0,
+      "launch_outcomes": {
+        "RESUPPLY-LAUNCH": true
+      }
+    }
+  ],
+  "launch_opportunities": [
+    {
+      "launch_event": "RESUPPLY-LAUNCH",
+      "provider": "Demo Launch Provider",
+      "vehicle": "Shared LEO",
+      "capacity_kg": 400,
+      "booking_deadline_s": 2592000,
+      "planned_launch_s": 6912000,
+      "available_from_s": 7776000
+    }
+  ],
+  "manifest_candidates": [
+    {
+      "item_id": "XE-LOT-A",
+      "name": "40 kg xenon lot A",
+      "payload_type": "commodity",
+      "commodity": "xenon_kg",
+      "quantity": 40,
+      "mass_kg": 40,
+      "destination": "DEPOT",
+      "launch_event": "RESUPPLY-LAUNCH",
+      "available_from_s": 7776000,
+      "cost": 2000000
+    },
+    {
+      "item_id": "XE-LOT-B",
+      "name": "40 kg xenon lot B",
+      "payload_type": "commodity",
+      "commodity": "xenon_kg",
+      "quantity": 40,
+      "mass_kg": 40,
+      "destination": "DEPOT",
+      "launch_event": "RESUPPLY-LAUNCH",
+      "available_from_s": 7776000,
+      "cost": 2000000
+    },
+    {
+      "item_id": "SERVICER-2",
+      "name": "Additional servicer",
+      "payload_type": "servicer",
+      "asset_id": "SERVICER-2",
+      "quantity": 1,
+      "mass_kg": 300,
+      "destination": "DEPOT",
+      "launch_event": "RESUPPLY-LAUNCH",
+      "available_from_s": 7776000,
+      "cost": 10000000
+    }
+  ]
+}

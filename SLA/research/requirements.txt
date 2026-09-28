@@ -1,0 +1,4 @@
+numpy>=2.0
+matplotlib>=3.9
+psycopg[binary]>=3.2
+nbformat>=5.10
