@@ -4,11 +4,9 @@ This is the Python research-code and result release accompanying the paper
 *Multi-objective mission planning for depot-supported on-orbit servicing*.
 It contains the mission model, multi-directional local search (MDLS), the
 NSGA-II comparator, paired-trial analysis, and lexicographic depot-location
-MILP. The released workflow is Python-only; superseded development code and
-intermediate files are excluded from the release.
+MILP.
 
-The links below refer to manuscript topics and figure contents rather than
-section or figure numbers, so they remain valid if numbering changes in review.
+The links below refer to manuscript topics and figure contents. 
 
 ## Paper-to-repository map
 
@@ -118,11 +116,7 @@ definitions, the NSGA-II decoder, MDLS neighbourhoods, and archive dominance.
 `outputs/cost_table.h5`, `outputs/simulation.h5`, and
 `outputs/depot_legs.h5` are generated working files excluded from Git. The
 compact `paper_results/` directory contains the evidence and figures reported
-in the manuscript. If the full cost table is deposited separately, add its DOI
-here as a related dataset.
-
-The local `waste/` directory contains superseded analyses and intermediate
-data. It is ignored by Git and must not be included in a release.
+in the manuscript. 
 
 ## Citation and licence
 
