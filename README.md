@@ -117,8 +117,3 @@ definitions, the NSGA-II decoder, MDLS neighbourhoods, and archive dominance.
 `outputs/depot_legs.h5` are generated working files excluded from Git. The
 compact `paper_results/` directory contains the evidence and figures reported
 in the manuscript. 
-
-## Citation and licence
-
-Citation metadata are in `CITATION.cff`; add the Zenodo DOI after it is reserved
-or issued. The code is released under the MIT License; see `LICENSE`.
