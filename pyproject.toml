@@ -3,7 +3,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mdls"
+name = "pymdls"
 dynamic = ["version"]
 description = "Multi-directional local search with user-supplied moves"
 readme = "README.md"

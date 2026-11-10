@@ -24,5 +24,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suite, user guide, packaging metadata and GitHub Actions workflows for
   CI and PyPI trusted publishing.
 
+The PyPI distribution is named `pymdls` because `mdls` is blocked by PyPI's
+name-similarity rule (it collides with the existing project `mdis`). The
+import package is still `mdls`.
+
 [Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.0...MDLS
 [0.1.0]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.0

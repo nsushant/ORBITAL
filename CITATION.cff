@@ -11,6 +11,9 @@ date-released: 2026-11-10
 license: MIT
 repository-code: "https://github.com/nsushant/ORBITAL/tree/MDLS"
 url: "https://github.com/nsushant/ORBITAL/tree/MDLS"
+identifiers:
+  - type: pypi
+    value: pymdls
 keywords:
   - multi-objective optimisation
   - multi-objective optimization

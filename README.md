@@ -12,15 +12,18 @@ generalised, reusable version of the MDLS engine used in
 ## Install
 
 ```bash
-pip install mdls
+pip install pymdls
 ```
+
+The distribution is named `pymdls`; the import package is `mdls`, so the code
+below always uses `from mdls import ...`.
 
 Python 3.10 or newer is required. NumPy and Numba are installed automatically.
 
 For the example's plotting command, install the extra:
 
 ```bash
-pip install "mdls[examples]"
+pip install "pymdls[examples]"
 ```
 
 ## Quick start

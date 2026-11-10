@@ -3,8 +3,10 @@
 ## Install
 
 ```bash
-pip install mdls
+pip install pymdls
 ```
+
+The distribution is named `pymdls`; the import package is `mdls`.
 
 Python 3.10 or newer is required. To work from a checkout instead, run
 `pip install -e .` from the repository root (the `MDLS` branch).
