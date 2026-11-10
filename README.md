@@ -102,10 +102,18 @@ The full tutorial, including the move contract and every option, is in
 
 ## Testing
 
+The test suite lives in the repository, so clone it first (the `MDLS` branch):
+
 ```bash
+git clone https://github.com/nsushant/ORBITAL.git
+cd ORBITAL
+git switch MDLS
 pip install -e ".[dev,examples]"
-pytest
+python -m pytest
 ```
+
+`.[dev]` alone is enough to run the tests; the `examples` extra is only needed
+for `python examples/knapsack.py plot`.
 
 ## License
 
