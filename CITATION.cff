@@ -6,7 +6,7 @@ type: software
 authors:
   - family-names: Nigudkar
     given-names: Sushanta
-version: 0.1.1
+version: 0.1.2
 date-released: 2026-11-10
 license: MIT
 repository-code: "https://github.com/nsushant/ORBITAL/tree/MDLS"

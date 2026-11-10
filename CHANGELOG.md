@@ -6,6 +6,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-10
+
+### Changed
+
+- The README testing section now includes the clone and branch steps, since
+  `pip install -e` needs a checkout, and uses `python -m pytest`.
+
 ## [0.1.1] - 2026-11-10
 
 ### Fixed
@@ -36,6 +43,7 @@ The PyPI distribution is named `pymdls` because `mdls` is blocked by PyPI's
 name-similarity rule (it collides with the existing project `mdis`). The
 import package is still `mdls`.
 
-[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.1...MDLS
+[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.2...MDLS
+[0.1.2]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.0
