@@ -6,7 +6,7 @@ type: software
 authors:
   - family-names: Nigudkar
     given-names: Sushanta
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-11-10
 license: MIT
 repository-code: "https://github.com/nsushant/ORBITAL/tree/MDLS"
@@ -25,14 +25,11 @@ preferred-citation:
   authors:
     - family-names: Tricoire
       given-names: Fabien
-    - family-names: Graf
-      given-names: Alexandra
-    - family-names: Hartl
-      given-names: Richard F.
-  title: "The bi-objective stochastic covering tour problem"
+  title: "Multi-directional local search"
   year: 2012
   journal: "Computers & Operations Research"
   volume: 39
-  issue: 7
-  start: 1582
-  end: 1592
+  issue: 12
+  start: 3089
+  end: 3101
+  doi: "10.1016/j.cor.2012.03.010"

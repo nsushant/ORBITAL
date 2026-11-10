@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-10
+
+### Fixed
+
+- Corrected the MDLS citation to Tricoire (2012), *Computers & Operations
+  Research* 39(12), 3089-3101. The previous entry named the wrong paper and
+  listed co-authors who did not write it.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added
@@ -28,5 +36,6 @@ The PyPI distribution is named `pymdls` because `mdls` is blocked by PyPI's
 name-similarity rule (it collides with the existing project `mdis`). The
 import package is still `mdls`.
 
-[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.0...MDLS
+[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.1...MDLS
+[0.1.1]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.0

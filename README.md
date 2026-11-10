@@ -5,7 +5,7 @@ search** (MDLS) for multi-objective optimisation. You supply an `evaluate`
 function and one move per objective; the library owns the non-dominated
 archive, selection, budgets and statistics.
 
-The method follows Tricoire, Graf and Hartl (2012). This package is a
+The method follows Tricoire (2012). This package is a
 generalised, reusable version of the MDLS engine used in
 [ORBITAL](https://github.com/nsushant/ORBITAL/tree/MDLS).
 
@@ -116,5 +116,6 @@ MIT. See [LICENSE](LICENSE).
 If you use this package in academic work, cite the MDLS paper and optionally
 the software itself (see `CITATION.cff`):
 
-> Tricoire, F., Graf, A., & Hartl, R. F. (2012). The bi-objective stochastic
-> covering tour problem. *Computers & Operations Research*, 39(7), 1582–1592.
+> Tricoire, F. (2012). Multi-directional local search. *Computers &
+> Operations Research*, 39(12), 3089–3101.
+> https://doi.org/10.1016/j.cor.2012.03.010
