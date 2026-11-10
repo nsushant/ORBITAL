@@ -1,0 +1,16 @@
+{
+  "n_items": 100,
+  "capacity_fraction": 0.5,
+  "instance_seed": 1,
+  "n_random_starts": 5,
+  "n_drop": 3,
+  "noise": 0.2,
+  "use_swap": true,
+  "swap_tries": 50,
+  "max_eval": 6000,
+  "seeds": [0, 1, 2, 3],
+  "record_every": 50,
+  "verbose": 0,
+  "front_csv": "front.csv",
+  "plot_png": "front.png"
+}

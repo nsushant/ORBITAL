@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: MDLS
+abstract: "A decorator-based implementation of multi-directional local search for multi-objective optimisation, with an archive of feasible non-dominated solutions and user-supplied moves."
+type: software
+authors:
+  - family-names: Nigudkar
+    given-names: Sushanta
+version: 0.1.0
+date-released: 2026-11-10
+license: MIT
+repository-code: "https://github.com/nsushant/ORBITAL/tree/MDLS"
+url: "https://github.com/nsushant/ORBITAL/tree/MDLS"
+keywords:
+  - multi-objective optimisation
+  - multi-objective optimization
+  - local search
+  - pareto
+  - metaheuristics
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Tricoire
+      given-names: Fabien
+    - family-names: Graf
+      given-names: Alexandra
+    - family-names: Hartl
+      given-names: Richard F.
+  title: "The bi-objective stochastic covering tour problem"
+  year: 2012
+  journal: "Computers & Operations Research"
+  volume: 39
+  issue: 7
+  start: 1582
+  end: 1592

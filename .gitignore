@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+
+# Environments
+.venv/
+venv/
+env/
+
+# Packaging and builds
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Tests and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Example output
+front.csv
+front.png
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/

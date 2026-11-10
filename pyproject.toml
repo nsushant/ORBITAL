@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mdls"
+dynamic = ["version"]
+description = "Multi-directional local search with user-supplied moves"
+readme = "README.md"
+license = { text = "MIT" }
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Sushanta Nigudkar" }]
+keywords = [
+  "multi-objective optimisation",
+  "multi-objective optimization",
+  "local search",
+  "pareto",
+  "metaheuristics",
+  "mdls",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+  "numpy>=1.23",
+  "numba>=0.57",
+]
+
+[project.optional-dependencies]
+examples = ["matplotlib>=3.6"]
+dev = [
+  "build>=1.0",
+  "pytest>=7.0",
+  "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/nsushant/ORBITAL/tree/MDLS"
+Repository = "https://github.com/nsushant/ORBITAL/tree/MDLS"
+Documentation = "https://github.com/nsushant/ORBITAL/blob/MDLS/user_guide.md"
+Issues = "https://github.com/nsushant/ORBITAL/issues"
+Changelog = "https://github.com/nsushant/ORBITAL/blob/MDLS/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/mdls/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mdls"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/mdls",
+  "/tests",
+  "/examples",
+  "/README.md",
+  "/LICENSE",
+  "/CHANGELOG.md",
+  "/CITATION.cff",
+  "/user_guide.md",
+  "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]
