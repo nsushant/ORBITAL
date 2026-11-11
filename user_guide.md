@@ -346,6 +346,29 @@ class MyMDLS(MDLS):
 
 - `run(..., record_every=n)` logs `(iteration, n_eval, front size)` to `res.history`, which is handy for plotting archive growth.
 
+## Large archives
+
+The archive switches to an exact dominance index automatically once the front
+reaches 8192 points; below that the Numba-compiled linear scan is cheaper, so
+there is nothing to configure. The index is a forest of static bounding-volume
+trees, merged like a binary counter, with Numba-compiled queries. It is exact:
+node bounds only discard subtrees that provably hold no match, and leaf
+candidates go through the same tolerance predicate as the scan, so the front is
+identical to the scan's, point for point. Nothing is truncated or approximated;
+MDLS keeps the full non-dominated set however large it grows.
+
+Appending a point updates the index incrementally. An insert that evicts
+archived points needs a rebuild, so if evictions are frequent (roughly more than
+2% of indexed inserts) the archive turns the index off and finishes the run on
+the scan. Either way the results do not change; only the running time does.
+
+`eps_rel` does not alter this. With a tolerance, dominance is not transitive, so
+when an insertion evicts points the index answers both the "victim" and the
+"blocked" query before mutating the archive, exactly as the scan does.
+
+The public API is unchanged: `Archive.add`, `Archive.objectives` (still an O(1)
+view) and the rest of the surface behave as before.
+
 ## Numba
 
 The interface stays plain Python. Performance comes from compiling the loop-heavy kernels inside your moves with `@njit`, which leaves the class and the move signatures untouched:
@@ -367,7 +390,7 @@ def greedy_fill(x, w, cap, order):
     return x
 ```
 
-`examples/knapsack.py` does this for its greedy refill and its swap search, and the library compiles the archive's dominance scan in `src/mdls/core.py`. Keep these rules in mind:
+`examples/knapsack.py` does this for its greedy refill and its swap search, and the library compiles the archive's dominance scan in `src/mdls/core.py` and its large-archive index in `src/mdls/_dominance.py`. Keep these rules in mind:
 
 - `cache=True` avoids recompiling in later processes, but it is optional and can misbehave for modules loaded dynamically; the first call in a process still compiles.
 - Do not use `fastmath=True` in the archive: it can break the 1e-9 tolerance and the finite-value check.

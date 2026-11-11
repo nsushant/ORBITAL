@@ -22,7 +22,14 @@ from dataclasses import dataclass, field
 import numpy as np
 from numba import njit
 
+from ._dominance import _Forest
+
 EPS_REL = 1e-9  # relative tolerance: smaller differences count as equal
+
+# Front size at which Archive switches from the linear scan to the dominance
+# index.  Below this the scan is cheaper than maintaining the index; the value
+# is read at call time so tests can override it.
+INDEX_MIN = 8192
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +134,10 @@ class Archive:
         self._keep = np.empty(int(capacity), dtype=np.bool_)
         self._n = 0
         self.solutions = []
+        self._index = None          # _Forest, built lazily at INDEX_MIN
+        self._index_enabled = True  # cleared if evictions make the index a liability
+        self._rebuilds = 0
+        self._indexed_inserts = 0
 
     def __len__(self):
         return self._n
@@ -147,15 +158,59 @@ class Archive:
         if self._n == self._f.shape[0]:
             self._grow()
 
-        accepted, k = _archive_insert(self._f[:self._n], f, self.eps_rel, self._keep[:self._n])
+        index = self._index
+        if index is None and self._index_enabled and self._n >= INDEX_MIN:
+            index = self._index = _Forest.build(self._f[:self._n])
+        if index is None:
+            return self._add_scan(f, solution)
+        return self._add_indexed(index, f, solution)
+
+    def _add_scan(self, f, solution):
+        """Linear-scan path: unchanged dominance semantics."""
+        n = self._n
+        accepted, k = _archive_insert(self._f[:n], f, self.eps_rel, self._keep[:n])
         if not accepted:
             return False
-
-        survivors = self._keep[:self._n]
-        self._f[:k] = self._f[:self._n][survivors]
+        if k == n:  # nothing evicted: append in place instead of compacting
+            self._f[n] = f
+            self.solutions.append(solution)
+            self._n = n + 1
+            return True
+        survivors = self._keep[:n]
+        self._f[:k] = self._f[:n][survivors]
         self._f[k] = f
         self.solutions = [s for s, kept in zip(self.solutions, survivors) if kept] + [solution]
         self._n = k + 1
+        return True
+
+    def _add_indexed(self, index, f, solution):
+        """Indexed path: victim-first, as MDLS specifies."""
+        n = self._n
+        victims = index.victims(f, self.eps_rel)
+        if len(victims):
+            # With a tolerance, dominance is not transitive, so the second query
+            # cannot be skipped: run it before mutating anything.
+            if self.eps_rel > 0.0 and index.blocked(f, self.eps_rel):
+                return False
+            mask = np.ones(n, dtype=np.bool_)
+            mask[victims] = False
+            k = n - len(victims)
+            self._f[:k] = self._f[:n][mask]
+            self._f[k] = f
+            self.solutions = [s for s, kept in zip(self.solutions, mask) if kept] + [solution]
+            self._n = k + 1
+            self._index = _Forest.build(self._f[:self._n])
+            self._rebuilds += 1
+            if self._rebuilds > 8 and self._rebuilds > 0.02 * max(self._indexed_inserts, 1):
+                self._index, self._index_enabled = None, False
+            return True
+        if index.blocked(f, self.eps_rel):
+            return False
+        self._f[n] = f
+        self.solutions.append(solution)
+        self._n = n + 1
+        index.add(f, n)
+        self._indexed_inserts += 1
         return True
 
     def _grow(self):

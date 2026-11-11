@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+### Added
+
+- An exact dominance index for large archives. Once the front reaches 8192
+  points, `Archive.add` switches automatically from the linear scan to a forest
+  of static bounding-volume trees queried by Numba. Fronts with many objectives
+  now grow without a quadratic scan: at 100 000 archived points an m=6 insert
+  costs about 20-30 us instead of ~230 us. Results are identical to the scan;
+  nothing is approximated or truncated. If evictions become frequent the index
+  disables itself and the run finishes on the scan.
+- `tests/test_dominance.py` for the index kernels, forest and archive
+  differential tests, and slow-marked performance guards in
+  `tests/test_performance.py` (run them with `python -m pytest -m slow`).
+
+### Changed
+
+- The scan path appends in place when an insert evicts nothing, instead of
+  compacting the whole buffer and rebuilding the solution list.
+
 ## [0.1.2] - 2026-11-10
 
 ### Changed
@@ -43,7 +63,8 @@ The PyPI distribution is named `pymdls` because `mdls` is blocked by PyPI's
 name-similarity rule (it collides with the existing project `mdis`). The
 import package is still `mdls`.
 
-[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.1.2...MDLS
+[Unreleased]: https://github.com/nsushant/ORBITAL/compare/v0.2.0...MDLS
+[0.2.0]: https://github.com/nsushant/ORBITAL/releases/tag/v0.2.0
 [0.1.2]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nsushant/ORBITAL/releases/tag/v0.1.0

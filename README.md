@@ -82,11 +82,16 @@ print(res.objectives)
   including initial solutions) or wall-clock time (`time_limit`).
 - **Statistics**: per-move counts of calls, no-moves, non-descents, infeasible
   results, dominated results, accepted results and time.
+- **Large-archive index**: past 8192 archived points the archive switches
+  automatically to an exact Numba dominance index, so fronts with many
+  objectives keep growing without a quadratic scan. Results are identical to
+  the scan.
 - **Extension points**: `is_feasible`, `selection`, `copy_solution`, and the
   `select`, `offer`, `copy` and `on_iteration` hooks.
 
 Moves are ordinary functions and stay readable; Numba is optional but is used
-inside the library's dominance scan and can be used inside your own moves.
+inside the library's dominance scan and large-archive index, and can be used
+inside your own moves.
 
 ## Examples
 
